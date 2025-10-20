@@ -1,0 +1,23 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# NLP libraries
+nltk>=3.8.0
+
+# LLM API
+groq>=0.4.0
+
+# Web interface
+streamlit>=1.25.0
+plotly>=5.15.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Evaluation metrics (optional - only used in evaluation.py)
+rouge-score>=0.1.2
+
+# Development and testing (optional)
+pytest>=7.4.0
