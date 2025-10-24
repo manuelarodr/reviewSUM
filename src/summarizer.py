@@ -67,7 +67,8 @@ class ChainOfDensitySummarizer:
         if len(reviews_df) == 0:
             return {
                 "summary": "No reviews available for summarization.",
-                "claims": [],
+                "entities": [],
+                "entity_log": [],
                 "theme_stats": {},
                 "model_used": self.config.model_name
             }
@@ -254,6 +255,78 @@ class ChainOfDensitySummarizer:
             return error_result, f"Error: {e}\n{error_details}"
     
     
+    def summarize_vanilla(
+        self,
+        reviews_df: pd.DataFrame,
+        themes_data: Dict[str, Any],
+        product_name: str = "product"
+    ) -> Dict[str, Any]:
+        """
+        Generate summary using vanilla prompt (simple summarization).
+        Args:
+            reviews_df: DataFrame containing filtered reviews
+            themes_data: Theme extraction results
+            product_name: Name of the product being summarized
+        Returns:
+            Dictionary containing summary and metadata
+        """
+        if len(reviews_df) == 0:
+            return {
+                "summary": "No reviews available for summarization.",
+                "theme_stats": {},
+                "model_used": self.config.model_name
+            }
+        
+        # Prepare review texts for summarization
+        review_texts = self._prepare_review_texts(reviews_df)
+        
+        # Generate summary using vanilla prompt
+        summary_result = self._summarize_with_vanilla_prompt(review_texts, product_name)
+        
+        return {
+            "summary": summary_result,
+            "theme_stats": themes_data.get("theme_stats", {}),
+            "model_used": self.config.model_name
+        }
+    
+    def _summarize_with_vanilla_prompt(self, review_texts: str, product_name: str) -> str:
+        """
+        Generate summary using vanilla prompt.
+        
+        Args:
+            review_texts: Formatted review texts
+            product_name: Name of the product
+            
+        Returns:
+            Summary text
+        """
+        prompt = f"""Summarize the following product reviews of {product_name} into a single, coherent summary of under 120 words. Capture the main themes, common praises, and criticisms mentioned by users. Avoid repetition, personal opinions, or unrelated details. Maintain a neutral and informative tone.
+
+Customer reviews:
+{review_texts}"""
+        
+        try:
+            response = self.groq_client.chat.completions.create(
+                model=self.config.model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens
+            )
+            
+            content = response.choices[0].message.content
+            return content.strip()
+                
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Error with Groq API: {e}\nDetails:\n{error_details}")
+            return f"Error generating summary: {e}"
+
     def _create_chain_of_density_prompt(self, review_texts: str, product_name: str) -> str:
         """
         Create Chain-of-Density prompt for summarization.
@@ -270,8 +343,8 @@ class ChainOfDensitySummarizer:
 Repeat the following two steps 5 times:
 
 1. Identify 1–3 informative entities from the reviews which are missing from the previously generated summary. 
-    For each new entity:
-        - Record the `review_id`s for all reviews that mention the entity.
+    For every entity you identify:
+        - Record the `review_id`s only for reviews that mention the entity.
         - Add a record to a running `entity_log` in the format:
   ```json
   {{"iteration": <int>, "entity": "<entity_name>", "review_ids": ["<id1>", "<id2>", ...]}}
