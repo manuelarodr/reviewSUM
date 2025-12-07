@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Build and cache ProductFacts for the AMASUM sample products (Step 7).
+Build and cache ProductFacts for the AMASUM sample products.
 
 For each product JSON in amasum-5productsample:
   - If a cached ProductFacts file exists, reuse it (unless --force is set).
   - Otherwise:
       * load reviews
-      * compute feature-level facts using CoD entities + embeddings
+      * compute feature-level facts (local models only)
+      * optionally call Groq once to generate a feature-grounded summary
       * save ProductFacts to data/cache/product_facts/<product_id>.json
 
-This script is intended to be run occasionally (e.g., during experiments),
-not on every request.
 """
 
 import argparse
@@ -22,10 +21,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.utils.data_loader import load_product_data, reviews_to_dataframe
-from src.filtering import AdvancedReviewFilter, FilteringCriteria
-from src.sentence_index import build_or_load_sentence_index
-from src.summarizer import create_summarizer
-from src.cod_product_facts import build_product_facts_from_cod
+from src.feature_sentiment import build_product_facts_from_features
+from src.feature_summary_groq import summarize_product_facts_with_groq
 from src.product_facts_io import load_product_facts, save_product_facts
 
 
@@ -45,8 +42,7 @@ def process_product_json(
     path: Path,
     *,
     force: bool = False,
-    token_limit: int = 4000,
-    similarity_threshold: float = 0.3,
+    summarize: bool = True,
 ) -> None:
     """
     Build or reuse ProductFacts for a single product JSON file.
@@ -66,42 +62,11 @@ def process_product_json(
     reviews_df = reviews_to_dataframe(data["customer_reviews"])
     print(f"Reviews: {len(reviews_df)}")
 
-    # Sentence index (cached) for embeddings/sentiment
-    sentences_df, sentence_embeddings = build_or_load_sentence_index(
-        str(product_id), reviews_df
-    )
-
-    # Embedding-based filtering to respect token budget
-    review_id_to_idx = {rid: idx for idx, rid in enumerate(reviews_df["review_id"])}
-    sentence_to_review_mapping = [
-        review_id_to_idx.get(rid, -1) for rid in sentences_df["review_id"].tolist()
-    ]
-    filterer = AdvancedReviewFilter(FilteringCriteria(token_limit=token_limit))
-    filtered_df, filter_stats = filterer.filter_reviews(
-        reviews_df,
-        sentence_embeddings=sentence_embeddings,
-        sentence_to_review_mapping=sentence_to_review_mapping,
-    )
-
-    if filtered_df.empty:
-        print("Warning: No reviews remain after filtering; skipping.")
-        return
-
-    # CoD summarization over filtered reviews
-    product_name = data.get("product_meta", {}).get("title", "product")
-    summarizer = create_summarizer()
-    summary_result = summarizer.summarize(
-        filtered_df, themes_data={}, product_name=product_name
-    )
-
-    # Ground entities to build ProductFacts
-    product_facts = build_product_facts_from_cod(
+    # Local feature detection + sentiment
+    print("Computing feature-level facts locally...")
+    product_facts = build_product_facts_from_features(
         product_id=product_id,
-        reviews_df=filtered_df,
-        summary_result=summary_result,
-        similarity_threshold=similarity_threshold,
-        sentences_df=sentences_df,
-        sentence_embeddings=sentence_embeddings,
+        reviews_df=reviews_df,
     )
 
     # Cache result
@@ -124,16 +89,9 @@ def main() -> None:
         help="Recompute ProductFacts even if a cached file exists.",
     )
     parser.add_argument(
-        "--token-limit",
-        type=int,
-        default=4000,
-        help="Token budget for filtering before CoD.",
-    )
-    parser.add_argument(
-        "--similarity-threshold",
-        type=float,
-        default=0.3,
-        help="Cosine similarity threshold for grounding entities to sentences.",
+        "--no-summary",
+        action="store_true",
+        help="Skip Groq summarization; only compute feature facts.",
     )
     args = parser.parse_args()
 
@@ -151,10 +109,10 @@ def main() -> None:
         process_product_json(
             path,
             force=args.force,
-            token_limit=args.token_limit,
-            similarity_threshold=args.similarity_threshold,
+            summarize=not args.no_summary,
         )
 
 
 if __name__ == "__main__":
     main()
+
