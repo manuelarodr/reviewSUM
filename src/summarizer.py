@@ -1,519 +1,279 @@
 """
-Credibility-aware summarization module using Chain-of-Density prompting.
-
-This module implements transparent, factual summarization from customer reviews using
-a Chain-of-Density (CoD) procedure that iteratively compresses content while preserving
-all distinct factual entities. Each claim maps to supporting review IDs and includes
-prevalence data.
+Chain-of-Density summarization for customer reviews.
 """
 
+from __future__ import annotations
+
 import json
+import os
 import re
-from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
 import pandas as pd
 from groq import Groq
-import os
+
 
 @dataclass
 class SummarizationConfig:
-    """Configuration for summarization."""
-    model_name: str = "llama-3.1-8b-instant"  # Groq model
+    model_name: str = "llama-3.1-8b-instant"
     max_summary_length: int = 120
     chain_of_density_iterations: int = 5
     temperature: float = 0.1
-    max_tokens: int = 4000  # Increased token limit
-    max_prompt_chars: int = 50000  # Removed prompt character limit
+    max_tokens: int = 4000
+    max_prompt_chars: int = 50000
+
 
 class ChainOfDensitySummarizer:
-    """
-    Implements Chain-of-Density summarization for customer reviews.
-    """
-    
+    """Implements Chain-of-Density summarization for customer reviews."""
+
     def __init__(self, config: Optional[SummarizationConfig] = None):
-        """
-        Initialize the summarizer.
-        Args:
-            config: Summarization configuration
-        """
         self.config = config or SummarizationConfig()
-        self.groq_client = None
+        self.groq_client: Optional[Groq] = None
         self._initialize_groq()
-    
-    def _initialize_groq(self):
-        """Initialize Groq client."""
+
+    def _initialize_groq(self) -> None:
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             raise ValueError("GROQ_API_KEY environment variable not set")
-        
         self.groq_client = Groq(api_key=api_key)
-    
-    
+
     def summarize(
         self,
         reviews_df: pd.DataFrame,
         themes_data: Dict[str, Any],
-        product_name: str = "product"
+        product_name: str = "product",
     ) -> Dict[str, Any]:
-        """
-        Generate summary using Chain-of-Density prompting.
-        Args:
-            reviews_df: DataFrame containing filtered reviews
-            themes_data: Theme extraction results
-            product_name: Name of the product being summarized
-        Returns:
-            Dictionary containing summary, claims, and metadata
-        """
         if len(reviews_df) == 0:
             return {
                 "summary": "No reviews available for summarization.",
                 "entities": [],
                 "entity_log": [],
                 "theme_stats": {},
-                "model_used": self.config.model_name
+                "model_used": self.config.model_name,
             }
-        
-        # Prepare review texts for summarization
+
         review_texts = self._prepare_review_texts(reviews_df)
-        
-        # Generate summary using Groq
         summary_result = self._summarize_with_groq(review_texts, product_name)
-        
-        # Extract entities and map to supporting reviews
-        entities = self._extract_entities(summary_result, reviews_df)
-        
-        # Extract the actual summary text and entity_log from the nested structure
+        entities = self._extract_entities(summary_result)
+
         if isinstance(summary_result.get("summary"), dict):
             actual_summary = summary_result["summary"].get("summary", "")
             entity_log = summary_result["summary"].get("entity_log", [])
         else:
             actual_summary = summary_result.get("summary", "")
             entity_log = summary_result.get("entity_log", [])
-        
+
         return {
             "summary": actual_summary,
             "entities": entities,
             "entity_log": entity_log,
             "theme_stats": themes_data.get("theme_stats", {}),
-            "model_used": self.config.model_name
+            "model_used": self.config.model_name,
         }
-    
+
     def summarize_with_raw_output(
         self,
         reviews_df: pd.DataFrame,
         themes_data: Dict[str, Any],
-        product_name: str = "product"
+        product_name: str = "product",
     ) -> Dict[str, Any]:
-        """
-        Generate summary and return raw LLM output for testing purposes.
-        Args:
-            reviews_df: DataFrame containing filtered reviews
-            themes_data: Theme extraction results
-            product_name: Name of the product being summarized
-        Returns:
-            Dictionary containing summary, raw output, and metadata
-        """
         if len(reviews_df) == 0:
             return {
                 "summary": "No reviews available for summarization.",
                 "raw_output": "",
                 "theme_stats": {},
-                "model_used": self.config.model_name
+                "model_used": self.config.model_name,
             }
-        
-        # Prepare review texts for summarization
+
         review_texts = self._prepare_review_texts(reviews_df)
-        
-        # Generate summary using Groq and get raw output
         summary_result, raw_output = self._summarize_with_groq_raw(review_texts, product_name)
-        
-        # Extract entities and map to supporting reviews
-        entities = self._extract_entities(summary_result, reviews_df)
-        
-        # Extract the actual summary text and entity_log from the nested structure
+        entities = self._extract_entities(summary_result)
+
         if isinstance(summary_result.get("summary"), dict):
             actual_summary = summary_result["summary"].get("summary", "")
             entity_log = summary_result["summary"].get("entity_log", [])
         else:
             actual_summary = summary_result.get("summary", "")
             entity_log = summary_result.get("entity_log", [])
-        
+
         return {
             "summary": actual_summary,
             "raw_output": raw_output,
             "entities": entities,
             "entity_log": entity_log,
             "theme_stats": themes_data.get("theme_stats", {}),
-            "model_used": self.config.model_name
+            "model_used": self.config.model_name,
         }
 
     def _prepare_review_texts(self, reviews_df: pd.DataFrame) -> str:
-        """
-        Prepare review texts for summarization.
-        
-        Args:
-            reviews_df: DataFrame containing reviews
-            
-        Returns:
-            Formatted string of review texts
-        """
         review_texts = []
-        
         for _, review in reviews_df.iterrows():
-            # Format each review with metadata
             review_text = f"Review_id: {review['review_id']}: {review['text']}"
             review_texts.append(review_text)
-        
-        combined = "\n\n".join(review_texts)
-        # No truncation - use all reviews
-        return combined
-    
+        return "\n\n".join(review_texts)
+
     def _summarize_with_groq(self, review_texts: str, product_name: str) -> Dict[str, Any]:
-        """
-        Generate summary using Groq API with Chain-of-Density prompting.
-        
-        Args:
-            review_texts: Formatted review texts
-            product_name: Name of the product
-            
-        Returns:
-            Dictionary containing summary and claims
-        """
         prompt = self._create_chain_of_density_prompt(review_texts, product_name)
-        
         try:
             response = self.groq_client.chat.completions.create(
                 model=self.config.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens
+                max_tokens=self.config.max_tokens,
             )
-            
             content = response.choices[0].message.content
-            
-            # Try to parse JSON response
             try:
-                result = json.loads(content)
-                return result
+                return json.loads(content)
             except json.JSONDecodeError:
-                # If JSON parsing fails, extract summary from text
                 return self._extract_summary_from_text(content)
-                
         except Exception as e:
             import traceback
+
             error_details = traceback.format_exc()
-            print(f"Error with Groq API: {e}\nDetails:\n{error_details}")
             return {"summary": f"Error generating summary: {e}", "claims": [], "error_details": error_details}
-    
-    def _summarize_with_groq_raw(self, review_texts: str, product_name: str) -> Tuple[Dict[str, Any], str]:
-        """
-        Generate summary using Groq API with Chain-of-Density prompting and return raw output.
-        
-        Args:
-            review_texts: Formatted review texts
-            product_name: Name of the product
-            
-        Returns:
-            Tuple of (parsed_result, raw_output)
-        """
+
+    def _summarize_with_groq_raw(
+        self, review_texts: str, product_name: str
+    ) -> Tuple[Dict[str, Any], str]:
         prompt = self._create_chain_of_density_prompt(review_texts, product_name)
-        
         try:
             response = self.groq_client.chat.completions.create(
                 model=self.config.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens
+                max_tokens=self.config.max_tokens,
             )
-            
             content = response.choices[0].message.content
-            
-            # Try to parse JSON response
             try:
                 result = json.loads(content)
                 return result, content
             except json.JSONDecodeError:
-                # If JSON parsing fails, extract summary from text
                 parsed_result = self._extract_summary_from_text(content)
                 return parsed_result, content
-                
         except Exception as e:
             import traceback
+
             error_details = traceback.format_exc()
-            print(f"Error with Groq API: {e}\nDetails:\n{error_details}")
             error_result = {"summary": f"Error generating summary: {e}", "claims": [], "error_details": error_details}
             return error_result, f"Error: {e}\n{error_details}"
-    
-    
+
     def summarize_vanilla(
         self,
         reviews_df: pd.DataFrame,
         themes_data: Dict[str, Any],
-        product_name: str = "product"
+        product_name: str = "product",
     ) -> Dict[str, Any]:
-        """
-        Generate summary using vanilla prompt (simple summarization).
-        Args:
-            reviews_df: DataFrame containing filtered reviews
-            themes_data: Theme extraction results
-            product_name: Name of the product being summarized
-        Returns:
-            Dictionary containing summary and metadata
-        """
         if len(reviews_df) == 0:
             return {
                 "summary": "No reviews available for summarization.",
                 "theme_stats": {},
-                "model_used": self.config.model_name
+                "model_used": self.config.model_name,
             }
-        
-        # Prepare review texts for summarization
+
         review_texts = self._prepare_review_texts(reviews_df)
-        
-        # Generate summary using vanilla prompt
         summary_result = self._summarize_with_vanilla_prompt(review_texts, product_name)
-        
+
         return {
             "summary": summary_result,
             "theme_stats": themes_data.get("theme_stats", {}),
-            "model_used": self.config.model_name
+            "model_used": self.config.model_name,
         }
-    
+
     def _summarize_with_vanilla_prompt(self, review_texts: str, product_name: str) -> str:
-        """
-        Generate summary using vanilla prompt.
-        
-        Args:
-            review_texts: Formatted review texts
-            product_name: Name of the product
-            
-        Returns:
-            Summary text
-        """
         prompt = f"""Summarize the following product reviews of {product_name} into a single, coherent summary of under 120 words. Capture the main themes, common praises, and criticisms mentioned by users. Avoid repetition, personal opinions, or unrelated details. Maintain a neutral and informative tone.
 
 Customer reviews:
 {review_texts}"""
-        
         try:
             response = self.groq_client.chat.completions.create(
                 model=self.config.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens
+                max_tokens=self.config.max_tokens,
             )
-            
-            content = response.choices[0].message.content
-            return content.strip()
-                
+            return response.choices[0].message.content.strip()
         except Exception as e:
             import traceback
+
             error_details = traceback.format_exc()
-            print(f"Error with Groq API: {e}\nDetails:\n{error_details}")
             return f"Error generating summary: {e}"
 
     def _create_chain_of_density_prompt(self, review_texts: str, product_name: str) -> str:
-        """
-        Create Chain-of-Density prompt for summarization.
-        
-        Args:
-            review_texts: Formatted review texts
-            product_name: Name of the product
-            
-        Returns:
-            Formatted prompt string
-        """
         prompt = f"""You will generate increasingly concise, entity-dense summaries of the customer reviews of the {product_name} product.
 
 Repeat the following two steps 5 times:
+1) Identify 1–3 informative entities from the reviews which are missing from the previously generated summary.
+2) Write a new, denser summary of identical length which covers every entity and detail from the previous summary plus the missing entities.
 
-1. Identify 1–3 informative entities from the reviews which are missing from the previously generated summary. 
-    For every entity you identify:
-        - Record the `review_id`s only for reviews that mention the entity.
-        - Add a record to a running `entity_log` in the format:
-  ```json
-  {{"iteration": <int>, "entity": "<entity_name>", "review_ids": ["<id1>", "<id2>", ...]}}
-2. Write a new, denser summary of identical length which covers every entity and detail from the previous summary plus the missing entities.
-
-An entity is any functional or non-functional feature of the product that users mention in their reviews and perceive to either harm or enhance their overall experience.
-
-A missing entity is:
-• must berelevant to the product's functionality,
-• specific yet concise (≤5 words),
-• novel (not in the previous summary),
-• faithful (present in the reviews),
-• anywhere (can occur anywhere in the reviews).
+Entities: any functional or non-functional feature of the product that customers mention and that affects their experience. A missing entity is relevant to shoppers (helps a potential buyer understand customer opinion on that feature), specific (≤5 words), novel vs. the previous summary, faithful to the reviews, and can come from anywhere in the reviews.
 
 Guidelines:
-- The first summary should be long (≈120 words, 4–5 sentences) and intentionally vague, containing few specifics beyond the identified missing entities. Use filler phrases ("the reviews mention...") to reach 120 words.
-- Each subsequent summary must maintain identical length while increasing information density through fusion, compression, and removal of redundant language.
-- Never drop entities from previous summaries.
-- When space is limited, add fewer new entities.
-- The final summary must be highly dense yet self-contained and understandable without reading the reviews.
-- Avoid product names other than {product_name}.
-- Exclude personal names, locations, URLs, or emails.
+- The first summary should be long (~120 words, 4–5 sentences) and intentionally vague except for the identified entities; use filler (“Customers mention...”) to reach length.
+- Subsequent summaries: identical length, increase density via fusion/compression, remove redundancy.
+- Never drop entities from previous summaries; when space is limited, add fewer new entities.
+- The final summary must be dense, self-contained, and understandable without reading the reviews.
+- Avoid product names other than {product_name}. Exclude personal names, locations, URLs, or emails.
 
-Only output the final(5th) dense summary and the entity_log. Structured as JSON:
-
+Only output the final (5th) dense summary and the entities mentioned in that final summary. Return valid JSON in this structure:
 {{
-    "summary": "<final dense summary text>",
-    "entity_log": [
-    {{"iteration": 1, "entity": "<string>", "review_ids": ["<id1>", "<id2>"]}},
-    {{"iteration": 2, "entity": "<string>", "review_ids": ["<id3>"]}},
-    ...
-  ],
+  "summary": "<final dense summary text>",
+  "entities": ["<entity_1>", "<entity_2>", ...]
 }}
-
-Return only valid JSON.
 
 Customer Reviews:
 {review_texts}"""
-        
         return prompt
-    
+
     def _extract_summary_from_text(self, text: str) -> Dict[str, Any]:
-        """
-        Extract summary from non-JSON response text.
-        
-        Args:
-            text: Response text from model
-            
-        Returns:
-            Dictionary with extracted summary and entity_log
-        """
-        # First try to extract JSON from the text (in case it's wrapped in other text)
-        json_match = re.search(r'\{.*"summary".*"entity_log".*\}', text, re.DOTALL)
+        # Try to extract JSON from the text
+        json_match = re.search(r'\{.*"summary".*?\}', text, re.DOTALL)
         if json_match:
             try:
-                json_text = json_match.group(0)
-                result = json.loads(json_text)
-                return result
+                return json.loads(json_match.group(0))
             except json.JSONDecodeError:
                 pass
-        
-        # Try to find JSON structure with regex patterns
+
+        # Try to find summary field explicitly
         summary_match = re.search(r'"summary":\s*"([^"]*)"', text)
-        entity_log_match = re.search(r'"entity_log":\s*(\[.*?\])', text, re.DOTALL)
-        
-        if summary_match and entity_log_match:
-            try:
-                summary_text = summary_match.group(1)
-                entity_log_text = entity_log_match.group(1)
-                entity_log = json.loads(entity_log_text)
-                
-                return {
-                    "summary": summary_text,
-                    "entity_log": entity_log
-                }
-            except json.JSONDecodeError:
-                pass
-        
-        # Fallback: try to find the final summary in Chain-of-Density format
-        lines = text.split('\n')
-        
-        # Look for explicit final summary markers
-        final_summary = None
-        for i, line in enumerate(lines):
-            if any(marker in line.lower() for marker in ['final summary', 'summary 5', 'dense summary']):
-                # Take the next few lines as the summary
-                summary_lines = []
-                for j in range(i+1, min(i+6, len(lines))):
-                    if lines[j].strip():
-                        summary_lines.append(lines[j].strip())
-                if summary_lines:
-                    final_summary = ' '.join(summary_lines)
-                    break
-        
-        # If no explicit marker found, try to extract the last substantial paragraph
-        if not final_summary:
-            # Look for the longest paragraph that seems like a summary
-            paragraphs = text.split('\n\n')
-            for paragraph in reversed(paragraphs):
-                paragraph = paragraph.strip()
-                if len(paragraph) > 50 and not paragraph.startswith('{') and not paragraph.startswith('['):
-                    final_summary = paragraph
-                    break
-        
-        # Final fallback: use entire text
-        if not final_summary:
-            final_summary = text
-        
-        return {
-            "summary": final_summary,
-            "entity_log": []
-        }
-    def _extract_entities(self, summary_result: Dict[str, Any], reviews_df: pd.DataFrame) -> List[Dict[str, Any]]:
-        """
-        Extract and validate entities from summary result.
-        
-        Args:
-            summary_result: Result from summarization
-            reviews_df: DataFrame containing reviews
-            
-        Returns:
-            List of validated entities with supporting reviews
-        """
-        # Handle nested structure - the actual summary and entity_log might be nested
-        if isinstance(summary_result.get("summary"), dict):
-            # If summary is a dict, extract the actual content
-            actual_summary = summary_result["summary"].get("summary", "")
-            entity_log = summary_result["summary"].get("entity_log", [])
-        else:
-            # If summary is a string, use the top-level entity_log
-            actual_summary = summary_result.get("summary", "")
-            entity_log = summary_result.get("entity_log", [])
-        
-        validated_entities = []
-        
-        for entity_entry in entity_log:
-            entity_name = entity_entry.get("entity", "")
-            review_ids = entity_entry.get("review_ids", [])
-            
-            # Validate supporting reviews exist
-            valid_reviews = [review_id for review_id in review_ids if review_id in reviews_df['review_id'].values]
-            
-            if valid_reviews and entity_name:  # Only include entities with valid supporting reviews
-                validated_entity = {
-                    "entity": entity_name,
-                    "iteration": entity_entry.get("iteration", 0),
-                    "supporting_reviews": valid_reviews,
-                    "review_count": len(valid_reviews),
-                    "percentage": len(valid_reviews) / len(reviews_df) if len(reviews_df) > 0 else 0.0
-                }
-                validated_entities.append(validated_entity)
-        
-        return validated_entities
+        if summary_match:
+            return {"summary": summary_match.group(1), "entity_log": []}
+
+        # Fallback: longest paragraph
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        paragraphs.sort(key=len, reverse=True)
+        fallback = paragraphs[0] if paragraphs else text
+        return {"summary": fallback, "entity_log": []}
+
+    def _extract_entities(self, summary_result: Dict[str, Any]) -> List[str]:
+        entities_raw = summary_result.get("entities") or []
+        names: List[str] = []
+
+        for ent in entities_raw:
+            if isinstance(ent, dict):
+                name = ent.get("entity") or ent.get("name") or ent.get("text")
+                if name:
+                    names.append(str(name))
+            elif isinstance(ent, str):
+                ent = ent.strip()
+                if ent:
+                    names.append(ent)
+
+        if names:
+            return names
+
+        # Fallback: derive from entity_log if present
+        entity_log = summary_result.get("entity_log") or []
+        for entry in entity_log:
+            name = entry.get("entity")
+            if name:
+                names.append(str(name))
+
+        return names
+
 
 def create_summarizer(
-    model_name: str = "llama-3.1-8b-instant",
-    max_length: int = 120
-    ) -> ChainOfDensitySummarizer:
-    """
-    Create a summarizer with common defaults.
-    Args:
-        model_name: Model name for Groq API
-        max_length: Maximum summary length
-    Returns:
-        ChainOfDensitySummarizer instance
-    """
-    config = SummarizationConfig(
-        model_name=model_name,
-        max_summary_length=max_length
-    )
+    model_name: str = "llama-3.1-8b-instant", max_length: int = 120
+) -> ChainOfDensitySummarizer:
+    config = SummarizationConfig(model_name=model_name, max_summary_length=max_length)
     return ChainOfDensitySummarizer(config)
-                # Remove stray duplicate backend selection logic at end of file

@@ -1,0 +1,187 @@
+{
+  "product_id": "0375402330",
+  "total_reviews": 43,
+  "features": [
+    {
+      "name": "build quality",
+      "description": "Physical construction, durability, and how sturdy or fragile the product feels.",
+      "review_count": 1,
+      "positive_count": 1,
+      "negative_count": 0,
+      "neutral_count": 0,
+      "supporting_review_ids": [
+        "r006"
+      ],
+      "evidence_sentences": [
+        "The images and corresponding icons flow brilliantly for ease of identification...Fits nicely in the Saddle Bag or field pocket of and explorer jacket and is very durable and colorful...I carry it every time I saddle up in the high country of the Cascades...to the deserts of the northwest...Photographer William J."
+      ]
+    },
+    {
+      "name": "design and appearance",
+      "description": "Look, style, color, and overall design.",
+      "review_count": 10,
+      "positive_count": 5,
+      "negative_count": 0,
+      "neutral_count": 5,
+      "supporting_review_ids": [
+        "r001",
+        "r002",
+        "r005",
+        "r015",
+        "r017",
+        "r019",
+        "r022",
+        "r024",
+        "r026",
+        "r029"
+      ],
+      "evidence_sentences": [
+        "I like the way it's organized (by color) the author was pretty creative on that one.",
+        "The book is well-organized (flowers are grouped by color).",
+        "The color photos are clear and close up for easy identification of the plant.",
+        "She loves that she can identify by the color of the flower.",
+        "I skimmed through it a few times and it looks like it has a ton of information!"
+      ]
+    },
+    {
+      "name": "ease of use",
+      "description": "How easy the product is to set up and use.",
+      "review_count": 14,
+      "positive_count": 12,
+      "negative_count": 0,
+      "neutral_count": 2,
+      "supporting_review_ids": [
+        "r000",
+        "r005",
+        "r006",
+        "r010",
+        "r019",
+        "r020",
+        "r021",
+        "r022",
+        "r023",
+        "r024",
+        "r034",
+        "r035",
+        "r037",
+        "r038"
+      ],
+      "evidence_sentences": [
+        "Easy to use and gives good basic information about each species.",
+        "This guide is easy to use.",
+        "This is a must have resource book for beginning to understand and identify Wild flowers...Although it is not the final chapter in identification it sure will get you started and is easy to follow and categorize.",
+        "The guide is easy to use and well organized.",
+        "The color photos are clear and close up for easy identification of the plant."
+      ]
+    },
+    {
+      "name": "price and value",
+      "description": "Price, perceived value for money, and affordability.",
+      "review_count": 2,
+      "positive_count": 0,
+      "negative_count": 1,
+      "neutral_count": 1,
+      "supporting_review_ids": [
+        "r004",
+        "r007"
+      ],
+      "evidence_sentences": [
+        "Ordering a replacement because the cover is torn is unnecessarily adding to carbon emissions...yet, I did pay full price for a damaged item.",
+        "Buying them used made the cost minimal."
+      ]
+    },
+    {
+      "name": "sound quality",
+      "description": "Audio quality such as clarity, bass, volume, and noise.",
+      "review_count": 3,
+      "positive_count": 2,
+      "negative_count": 0,
+      "neutral_count": 1,
+      "supporting_review_ids": [
+        "r013",
+        "r019",
+        "r030"
+      ],
+      "evidence_sentences": [
+        "Very clear photos and descriptions.",
+        "The color photos are clear and close up for easy identification of the plant.",
+        "Clear, complete photos, and detailed descriptions."
+      ]
+    }
+  ],
+  "summary": {
+    "text": "Most reviewers praise the product's ease of use, with many finding it simple to set up and use. The design and appearance also receive positive feedback, with a few reviewers appreciating the organization and color photos. In contrast, the sound quality and price and value are mentioned less frequently, with only a few reviewers commenting on these aspects. Build quality is mentioned the least, but one reviewer praises its durability.",
+    "claims": [
+      {
+        "text": "The product is easy to set up and use.",
+        "feature_name": "ease of use",
+        "review_count": 14,
+        "total_reviews": 43,
+        "supporting_review_ids": [
+          "r000",
+          "r005",
+          "r006",
+          "r010",
+          "r019",
+          "r020",
+          "r021",
+          "r022",
+          "r023",
+          "r024",
+          "r034",
+          "r035",
+          "r037",
+          "r038"
+        ]
+      },
+      {
+        "text": "The product has an attractive and well-organized design.",
+        "feature_name": "design and appearance",
+        "review_count": 10,
+        "total_reviews": 43,
+        "supporting_review_ids": [
+          "r001",
+          "r002",
+          "r005",
+          "r015",
+          "r017",
+          "r019",
+          "r022",
+          "r024",
+          "r026",
+          "r029"
+        ]
+      },
+      {
+        "text": "The product's sound quality is clear and good.",
+        "feature_name": "sound quality",
+        "review_count": 3,
+        "total_reviews": 43,
+        "supporting_review_ids": [
+          "r013",
+          "r019",
+          "r030"
+        ]
+      },
+      {
+        "text": "The product's price is not good value for money.",
+        "feature_name": "price and value",
+        "review_count": 2,
+        "total_reviews": 43,
+        "supporting_review_ids": [
+          "r004",
+          "r007"
+        ]
+      },
+      {
+        "text": "The product is very durable and well-made.",
+        "feature_name": "build quality",
+        "review_count": 1,
+        "total_reviews": 43,
+        "supporting_review_ids": [
+          "r006"
+        ]
+      }
+    ]
+  }
+}

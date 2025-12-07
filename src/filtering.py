@@ -1,390 +1,383 @@
 """
-Advanced filtering module for review summarization.
+Embedding-based review filtering for Chain-of-Density summarization.
 
-This module implements text preprocessing, TF-IDF based importance scoring,
-and stratified sampling for optimal review selection.
+This module filters reviews in four stages:
+- Optional user selection (verified/useful flags)
+- Token budget check (early return if under budget)
+- Semantic scoring via sentence embeddings aggregated to review level
+- Selection of top-scoring reviews until the token budget is met
 """
 
-import pandas as pd
-import re
-import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
-from dataclasses import dataclass
-from collections import Counter
-import nltk
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-from nltk.tokenize import word_tokenize
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import warnings
-warnings.filterwarnings('ignore')
+from __future__ import annotations
 
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
-    nltk.download('wordnet', quiet=True)
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
 
 @dataclass
 class FilteringCriteria:
-    """Configuration for review filtering criteria."""
-    min_review_length: int = 20
-    max_review_length: int = 2000
-    token_limit: int = 50000  # Removed token limit for testing
-    min_reviews_per_rating: int = 2  # Minimum reviews to keep per rating
-    max_reviews_per_rating: int = 200  # Increased max reviews per rating
-    tfidf_weight: float = 0.7  # Weight for TF-IDF in hybrid scoring
-    length_weight: float = 0.3  # Weight for length normalization
+    """Configuration for embedding-based filtering."""
+
+    # User selection
+    use_verified: Optional[bool] = None
+    use_useful: Optional[bool] = None
+
+    # Token management
+    token_limit: int = 4000
+    tokens_per_char: float = 0.25
+
+    # Ranking
+    helpful_boost: float = 0.5
+
 
 class AdvancedReviewFilter:
-    """
-    Advanced review filtering using text preprocessing, TF-IDF scoring, and stratified sampling.
-    """
-    
+    """Embedding-first review filter for the Chain-of-Density pipeline."""
+
     def __init__(self, criteria: Optional[FilteringCriteria] = None):
-        """
-        Initialize the advanced review filter.
-        
-        Args:
-            criteria: Filtering criteria configuration
-        """
         self.criteria = criteria or FilteringCriteria()
-        
-        # Initialize NLP components
-        self.stop_words = set(stopwords.words('english'))
-        self.lemmatizer = WordNetLemmatizer()
-        
-        # Compile regex patterns for text cleaning
-        self.html_pattern = re.compile(r'<[^>]+>')
-        self.url_pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
-        self.emoji_pattern = re.compile(r'[^\w\s]', re.UNICODE)  # Removes emojis and punctuation
-        self.digit_pattern = re.compile(r'\d+')
-        
-        # TF-IDF vectorizer
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=5000,
-            ngram_range=(1, 2),
-            min_df=2,
-            max_df=0.8,
-            stop_words='english'
-        )
-    
-    def preprocess_text(self, text: str) -> str:
+
+    def normalize_column_names(self, df: pd.DataFrame) -> Dict[str, str]:
         """
-        Preprocess text by removing HTML tags, emojis, punctuation, digits, URLs,
-        converting to lowercase, removing stopwords, and lemmatizing.
-        
-        Args:
-            text: Raw text to preprocess
-            
+        Map canonical column names to actual DataFrame columns.
+
         Returns:
-            Preprocessed text as bag of words
+            Dict[str, str]: Mapping of canonical names to DataFrame column names.
         """
-        if pd.isna(text) or not isinstance(text, str):
-            return ""
-        
-        # 1. Remove HTML tags
-        text = self.html_pattern.sub(' ', text)
-        
-        # 2. Remove URLs
-        text = self.url_pattern.sub(' ', text)
-        
-        # 3. Remove emojis and punctuation
-        text = self.emoji_pattern.sub(' ', text)
-        
-        # 4. Remove digits
-        text = self.digit_pattern.sub(' ', text)
-        
-        # 5. Convert to lowercase
-        text = text.lower()
-        
-        # 6. Tokenize and remove stopwords
-        tokens = word_tokenize(text)
-        tokens = [token for token in tokens if token not in self.stop_words and len(token) > 2]
-        
-        # 7. Lemmatize to root form
-        tokens = [self.lemmatizer.lemmatize(token) for token in tokens]
-        
-        return ' '.join(tokens)
-    
-    def calculate_hybrid_tfidf_score(self, reviews_df: pd.DataFrame) -> pd.Series:
-        """
-        Calculate hybrid TF-IDF scores for reviews.
-        
-        Args:
-            reviews_df: DataFrame containing reviews
-            
-        Returns:
-            Series of hybrid TF-IDF scores
-        """
-        # Preprocess all review texts
-        processed_texts = reviews_df['text'].apply(self.preprocess_text)
-        
-        # Fit TF-IDF vectorizer
-        tfidf_matrix = self.tfidf_vectorizer.fit_transform(processed_texts)
-        
-        # Calculate average TF-IDF score for each review
-        avg_tfidf_scores = np.array(tfidf_matrix.mean(axis=1)).flatten()
-        
-        # Normalize scores to 0-1 range
-        if avg_tfidf_scores.max() > 0:
-            avg_tfidf_scores = avg_tfidf_scores / avg_tfidf_scores.max()
-        
-        return pd.Series(avg_tfidf_scores, index=reviews_df.index)
-    
-    def calculate_review_importance(self, reviews_df: pd.DataFrame) -> pd.Series:
-        """
-        Calculate hybrid importance scores combining TF-IDF and length normalization.
-        
-        Args:
-            reviews_df: DataFrame containing reviews
-            
-        Returns:
-            Series of importance scores
-        """
-        # Calculate TF-IDF scores
-        tfidf_scores = self.calculate_hybrid_tfidf_score(reviews_df)
-        
-        # Calculate length normalization scores
-        text_lengths = reviews_df['text'].str.len()
-        max_length = text_lengths.max()
-        min_length = text_lengths.min()
-        
-        if max_length > min_length:
-            length_scores = (text_lengths - min_length) / (max_length - min_length)
-        else:
-            length_scores = pd.Series([0.5] * len(reviews_df), index=reviews_df.index)
-        
-        # Combine scores with weights
-        importance_scores = (
-            self.criteria.tfidf_weight * tfidf_scores + 
-            self.criteria.length_weight * length_scores
-        )
-        
-        return importance_scores
-    
-    def filter_reviews(self, reviews_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-        """
-        Filter and rank reviews using advanced preprocessing and TF-IDF scoring.
-        
-        Args:
-            reviews_df: DataFrame containing reviews with columns:
-                       review_id, text, rating, etc.
-        
-        Returns:
-            Tuple of (filtered_dataframe, filtering_stats)
-        """
-        original_count = len(reviews_df)
-        filtered_df = reviews_df.copy()
-        
-        # Track filtering statistics
-        stats = {
-            'original_count': original_count,
-            'filtered_count': 0,
-            'filter_reasons': {},
-            'rating_distribution': {},
-            'token_usage': 0
+        candidates = {
+            "review_id": ["review_id", "id"],
+            "text": ["text", "review_text", "content"],
+            "rating": ["rating", "stars"],
+            "verified": ["verified", "verified_purchase"],
+            "helpful_votes": ["helpful_votes", "helpful", "useful_votes"],
         }
-        
-        # 1. Basic length filtering
-        if self.criteria.min_review_length > 0:
-            before_count = len(filtered_df)
-            filtered_df = filtered_df[filtered_df['text'].str.len() >= self.criteria.min_review_length]
-            removed_count = before_count - len(filtered_df)
-            stats['filter_reasons']['too_short'] = removed_count
-        
-        if self.criteria.max_review_length > 0:
-            before_count = len(filtered_df)
-            filtered_df = filtered_df[filtered_df['text'].str.len() <= self.criteria.max_review_length]
-            removed_count = before_count - len(filtered_df)
-            stats['filter_reasons']['too_long'] = removed_count
-        
-        # 2. Calculate importance scores
-        importance_scores = self.calculate_review_importance(filtered_df)
-        filtered_df['importance_score'] = importance_scores
-        
-        # 3. Rank within each rating (stratified ranking)
-        filtered_df['rank_within_rating'] = filtered_df.groupby('rating')['importance_score'].rank(
-            method='dense', ascending=False
-        )
-        
-        # 4. Calculate proportional selection based on original distribution
-        # First, calculate the original distribution proportions
-        original_distribution = reviews_df['rating'].value_counts().sort_index()
-        total_original = len(reviews_df)
-        original_proportions = original_distribution / total_original
-        
-        # Calculate target number of reviews to select (based on token limit)
-        # Estimate average tokens per review
-        avg_tokens_per_review = filtered_df['text'].str.len().mean() / 4
-        target_total_reviews = min(
-            int(self.criteria.token_limit / avg_tokens_per_review),
-            len(filtered_df)
-        )
-        
-        # Calculate target reviews per rating based on original proportions
-        target_reviews_per_rating = {}
-        for rating in sorted(filtered_df['rating'].unique()):
-            proportion = original_proportions.get(rating, 0)
-            target_count = max(
-                self.criteria.min_reviews_per_rating,
-                min(
-                    int(target_total_reviews * proportion),
-                    self.criteria.max_reviews_per_rating
-                )
-            )
-            target_reviews_per_rating[rating] = target_count
-        
-        # Round-robin selection to ensure fair representation across all ratings
-        final_reviews = []
-        total_tokens = 0
-        
-        # Prepare rating groups with sorted reviews
-        rating_groups = {}
-        for rating in sorted(filtered_df['rating'].unique()):
-            rating_reviews = filtered_df[filtered_df['rating'] == rating].copy()
-            rating_reviews = rating_reviews.sort_values('rank_within_rating')
-            rating_reviews['estimated_tokens'] = rating_reviews['text'].str.len() / 4
-            rating_groups[rating] = {
-                'reviews': rating_reviews,
-                'target_count': target_reviews_per_rating[rating],
-                'selected_count': 0,
-                'tokens_used': 0,
-                'current_index': 0
-            }
-        
-        # Round-robin selection: alternate between rating groups
-        ratings_list = sorted(filtered_df['rating'].unique())
-        round_count = 0
-        
-        while True:
-            round_count += 1
-            added_any = False
-            
-            # Go through each rating group in this round
-            for rating in ratings_list:
-                group = rating_groups[rating]
-                
-                # Check if this group has reached its target or has no more reviews
-                if (group['selected_count'] >= group['target_count'] or 
-                    group['current_index'] >= len(group['reviews'])):
-                    continue
-                
-                # Get the next review for this rating
-                review = group['reviews'].iloc[group['current_index']]
-                review_tokens = review['estimated_tokens']
-                
-                # Check if adding this review would exceed token limit
-                if total_tokens + review_tokens > self.criteria.token_limit:
-                    continue  # Skip this review, try next rating
-                
-                # Add the review
-                final_reviews.append(review)
-                group['selected_count'] += 1
-                group['tokens_used'] += review_tokens
-                group['current_index'] += 1
-                total_tokens += review_tokens
-                added_any = True
-            
-            # If no reviews were added in this round, we're done
-            if not added_any:
-                break
-        
-        # Update stats for each rating group
-        for rating in ratings_list:
-            group = rating_groups[rating]
-            stats['rating_distribution'][f'rating_{int(rating)}'] = {
-                'total_reviews': len(group['reviews']),
-                'selected_reviews': group['selected_count'],
-                'target_reviews': group['target_count'],
-                'original_proportion': original_proportions.get(rating, 0),
-                'tokens_used': group['tokens_used']
-            }
-        
-        # Create final DataFrame
-        if final_reviews:
-            final_df = pd.DataFrame(final_reviews)
+
+        lower_map = {col.lower(): col for col in df.columns}
+        resolved: Dict[str, str] = {}
+
+        for canon, options in candidates.items():
+            for opt in options:
+                match = lower_map.get(opt.lower())
+                if match:
+                    resolved[canon] = match
+                    break
+
+        return resolved
+
+    def estimate_tokens(self, text: str) -> float:
+        """Rough token estimate based on character count."""
+        if isinstance(text, str):
+            length = len(text)
+        elif pd.isna(text):
+            length = 0
         else:
-            final_df = pd.DataFrame(columns=filtered_df.columns)
-        
-        stats['filtered_count'] = len(final_df)
-        stats['token_usage'] = total_tokens
-        stats['retention_rate'] = len(final_df) / original_count if original_count > 0 else 0
-        
-        return final_df, stats
-    
-    def get_preprocessed_text(self, text: str) -> str:
+            length = len(str(text))
+        return float(length) * float(self.criteria.tokens_per_char)
+
+    def aggregate_sentence_embeddings(
+        self,
+        reviews_df: pd.DataFrame,
+        sentence_embeddings: np.ndarray,
+        sentence_to_review_mapping: List[int],
+    ) -> np.ndarray:
         """
-        Get preprocessed text for a single review.
-        
+        Aggregate sentence embeddings to review-level embeddings using mean pooling.
+
         Args:
-            text: Raw review text
-            
+            reviews_df: DataFrame of reviews (index expected to align with mapping)
+            sentence_embeddings: (n_sentences, embedding_dim)
+            sentence_to_review_mapping: list mapping sentence idx -> review idx
+
         Returns:
-            Preprocessed text
+            np.ndarray of shape (n_reviews, embedding_dim)
         """
-        return self.preprocess_text(text)
-    
-    def get_review_importance_score(self, review_text: str, all_reviews: List[str]) -> float:
+        if len(sentence_embeddings) != len(sentence_to_review_mapping):
+            raise ValueError("Sentence embeddings and mapping length must match.")
+
+        n_reviews = len(reviews_df)
+        if n_reviews == 0:
+            return np.zeros((0, 0), dtype="float32")
+
+        if sentence_embeddings.size == 0:
+            # No sentences to aggregate; return zeros
+            return np.zeros((n_reviews, 0), dtype="float32")
+
+        embedding_dim = sentence_embeddings.shape[1]
+        review_embeddings = np.zeros((n_reviews, embedding_dim), dtype="float32")
+        counts = np.zeros(n_reviews, dtype=np.int32)
+
+        index_to_pos = {idx: pos for pos, idx in enumerate(reviews_df.index)}
+
+        for sent_idx, review_idx in enumerate(sentence_to_review_mapping):
+            pos = index_to_pos.get(review_idx)
+            if pos is None or pos >= n_reviews or pos < 0:
+                continue
+            review_embeddings[pos] += sentence_embeddings[sent_idx]
+            counts[pos] += 1
+
+        for i in range(n_reviews):
+            if counts[i] > 0:
+                review_embeddings[i] /= float(counts[i])
+
+        return review_embeddings
+
+    def calculate_semantic_importance(
+        self,
+        review_embeddings: np.ndarray,
+    ) -> np.ndarray:
         """
-        Calculate importance score for a single review given a corpus.
-        
-        Args:
-            review_text: Text of the review to score
-            all_reviews: List of all review texts in the corpus
-            
-        Returns:
-            Importance score between 0 and 1
+        Calculate semantic importance as closeness to the centroid (normalized to 0-1).
         """
-        # Preprocess the review
-        processed_text = self.preprocess_text(review_text)
-        
-        # Create a temporary DataFrame for TF-IDF calculation
-        temp_df = pd.DataFrame({'text': all_reviews + [review_text]})
-        temp_df['processed_text'] = temp_df['text'].apply(self.preprocess_text)
-        
-        # Calculate TF-IDF scores
-        tfidf_matrix = self.tfidf_vectorizer.fit_transform(temp_df['processed_text'])
-        
-        # Get the score for the last review (our target review)
-        review_score = np.array(tfidf_matrix[-1].mean()).flatten()[0]
-        
-        # Normalize
-        all_scores = np.array(tfidf_matrix.mean(axis=1)).flatten()
-        if all_scores.max() > 0:
-            review_score = review_score / all_scores.max()
-        
-        return float(review_score)
+        n_reviews = review_embeddings.shape[0]
+        if n_reviews == 0 or review_embeddings.size == 0:
+            return np.zeros(n_reviews, dtype="float32")
+
+        # Normalize embeddings to unit length to use cosine similarity.
+        norms = np.linalg.norm(review_embeddings, axis=1, keepdims=True)
+        safe_norms = np.where(norms == 0, 1.0, norms)
+        normalized = review_embeddings / safe_norms
+
+        centroid = normalized.mean(axis=0, keepdims=True)
+        centroid_norm = np.linalg.norm(centroid)
+        if centroid_norm > 0:
+            centroid = centroid / centroid_norm
+
+        similarities = np.dot(normalized, centroid.T).reshape(-1)
+        similarities = np.clip(similarities, -1.0, 1.0)
+
+        # Convert to a 0-1 score where 1 means most similar to centroid.
+        min_sim, max_sim = float(similarities.min()), float(similarities.max())
+        if max_sim > min_sim:
+            scores = (similarities - min_sim) / (max_sim - min_sim)
+        else:
+            scores = np.zeros_like(similarities, dtype="float32")
+
+        return scores.astype("float32")
+
+    def add_helpful_boost(
+        self,
+        reviews_df: pd.DataFrame,
+        semantic_scores: pd.Series,
+        helpful_col: Optional[str],
+    ) -> pd.Series:
+        """
+        Add a helpful-vote-based boost to semantic scores.
+        """
+        if helpful_col and helpful_col in reviews_df.columns:
+            votes = reviews_df[helpful_col].fillna(0)
+        else:
+            votes = pd.Series([0] * len(reviews_df), index=reviews_df.index)
+
+        if votes.max() > 0:
+            normalized_votes = (votes / votes.max()).clip(0, 1)
+        else:
+            normalized_votes = pd.Series([0] * len(reviews_df), index=reviews_df.index)
+
+        boost = normalized_votes * float(self.criteria.helpful_boost)
+        return semantic_scores + boost
+
+    def select_reviews_by_score(
+        self,
+        reviews_df: pd.DataFrame,
+        scores: pd.Series,
+        token_limit: int,
+        text_col: str,
+    ) -> Tuple[pd.DataFrame, float]:
+        """
+        Select top-scoring reviews without exceeding the token limit.
+        """
+        sorted_idx = scores.sort_values(ascending=False).index
+        selected_indices: List[int] = []
+        tokens_used = 0.0
+
+        for idx in sorted_idx:
+            est_tokens = self.estimate_tokens(reviews_df.at[idx, text_col])
+            if est_tokens <= 0:
+                continue
+            if tokens_used + est_tokens > token_limit:
+                continue
+            selected_indices.append(idx)
+            tokens_used += est_tokens
+
+        if not selected_indices and len(reviews_df) > 0:
+            # Fallback: pick the shortest review if nothing fits.
+            lengths = reviews_df[text_col].fillna("").apply(len)
+            shortest_idx = lengths.idxmin()
+            est_tokens = self.estimate_tokens(reviews_df.at[shortest_idx, text_col])
+            if est_tokens <= token_limit:
+                selected_indices.append(shortest_idx)
+                tokens_used = est_tokens
+
+        final_df = reviews_df.loc[selected_indices].reset_index(drop=True)
+        return final_df, tokens_used
+
+    def filter_reviews_with_selection(
+        self,
+        reviews_df: pd.DataFrame,
+        sentence_embeddings: np.ndarray,
+        sentence_to_review_mapping: List[int],
+        use_verified: Optional[bool] = None,
+        use_useful: Optional[bool] = None,
+        token_limit: Optional[int] = None,
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """
+        Filter reviews using user selection + embedding ranking.
+        """
+        working_df = reviews_df.copy().reset_index(drop=True)
+        original_count = len(working_df)
+        limit = int(token_limit or self.criteria.token_limit)
+
+        col_map = self.normalize_column_names(working_df)
+        text_col = col_map.get("text", "text")
+        verified_col = col_map.get("verified")
+        helpful_col = col_map.get("helpful_votes")
+        rating_col = col_map.get("rating")
+
+        if text_col not in working_df.columns:
+            raise ValueError("Input DataFrame must include a text column for token estimation.")
+
+        stats: Dict[str, Any] = {
+            "original_count": original_count,
+            "after_selection_count": 0,
+            "after_ranking_count": 0,
+            "token_usage": 0.0,
+            "token_limit": limit,
+            "selection_applied": {
+                "verified_only": 0,
+                "useful_only": 0,
+                "exclude_verified": 0,
+                "exclude_useful": 0,
+            },
+            "rating_distribution": {},
+            "retention_rate": 0.0,
+        }
+
+        # Stage 1: User selection filters.
+        selection_verified = (
+            self.criteria.use_verified if use_verified is None else use_verified
+        )
+        selection_useful = (
+            self.criteria.use_useful if use_useful is None else use_useful
+        )
+
+        if selection_verified is not None and verified_col:
+            before = len(working_df)
+            if selection_verified:
+                working_df = working_df[working_df[verified_col] == True]
+                stats["selection_applied"]["verified_only"] = before - len(working_df)
+            else:
+                working_df = working_df[working_df[verified_col] != True]
+                stats["selection_applied"]["exclude_verified"] = before - len(working_df)
+
+        if selection_useful is not None:
+            before = len(working_df)
+            helpful_series = (
+                working_df[helpful_col].fillna(0)
+                if helpful_col
+                else pd.Series([0] * len(working_df), index=working_df.index)
+            )
+            if selection_useful:
+                working_df = working_df[helpful_series > 0]
+                stats["selection_applied"]["useful_only"] = before - len(working_df)
+            else:
+                working_df = working_df[helpful_series <= 0]
+                stats["selection_applied"]["exclude_useful"] = before - len(working_df)
+
+        stats["after_selection_count"] = len(working_df)
+
+        if len(working_df) == 0:
+            return working_df, stats
+
+        # Stage 2: Token budget check (early return if within budget).
+        total_tokens = float(working_df[text_col].fillna("").apply(self.estimate_tokens).sum())
+        if total_tokens <= limit:
+            stats["after_ranking_count"] = len(working_df)
+            stats["token_usage"] = total_tokens
+            stats["retention_rate"] = (
+                len(working_df) / original_count if original_count else 0.0
+            )
+            if rating_col and rating_col in working_df.columns:
+                dist = working_df[rating_col].value_counts().sort_index()
+                stats["rating_distribution"] = {
+                    f"rating_{int(rating)}": {
+                        "count": int(count),
+                        "proportion": float(count / len(working_df)),
+                    }
+                    for rating, count in dist.items()
+                }
+            return working_df.reset_index(drop=True), stats
+
+        # Stage 3: Embedding-based ranking.
+        review_embeddings = self.aggregate_sentence_embeddings(
+            working_df, sentence_embeddings, sentence_to_review_mapping
+        )
+        semantic_scores = self.calculate_semantic_importance(review_embeddings)
+        semantic_series = pd.Series(semantic_scores, index=working_df.index)
+        final_scores = self.add_helpful_boost(working_df, semantic_series, helpful_col)
+
+        # Stage 4: Selection until token limit.
+        selected_df, tokens_used = self.select_reviews_by_score(
+            working_df, final_scores, limit, text_col
+        )
+
+        stats["after_ranking_count"] = len(selected_df)
+        stats["token_usage"] = tokens_used
+        stats["retention_rate"] = (
+            len(selected_df) / original_count if original_count else 0.0
+        )
+
+        if rating_col and rating_col in selected_df.columns and len(selected_df) > 0:
+            dist = selected_df[rating_col].value_counts().sort_index()
+            stats["rating_distribution"] = {
+                f"rating_{int(rating)}": {
+                    "count": int(count),
+                    "proportion": float(count / len(selected_df)),
+                }
+                for rating, count in dist.items()
+            }
+
+        return selected_df, stats
+
+    def filter_reviews(
+        self,
+        reviews_df: pd.DataFrame,
+        sentence_embeddings: Optional[np.ndarray] = None,
+        sentence_to_review_mapping: Optional[List[int]] = None,
+        **kwargs: Any,
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """
+        Backward-compatible wrapper that requires embeddings.
+        """
+        if sentence_embeddings is None or sentence_to_review_mapping is None:
+            raise ValueError("sentence_embeddings and sentence_to_review_mapping are required.")
+        return self.filter_reviews_with_selection(
+            reviews_df,
+            sentence_embeddings=sentence_embeddings,
+            sentence_to_review_mapping=sentence_to_review_mapping,
+            **kwargs,
+        )
+
 
 def create_filtering_criteria(
     token_limit: int = 4000,
-    min_reviews_per_rating: int = 2,
-    max_reviews_per_rating: int = 50,
-    tfidf_weight: float = 0.7
+    helpful_boost: float = 0.5,
+    tokens_per_char: float = 0.25,
+    use_verified: Optional[bool] = None,
+    use_useful: Optional[bool] = None,
 ) -> FilteringCriteria:
     """
-    Create filtering criteria with common defaults for API token limits.
-    
-    Args:
-        token_limit: Maximum tokens to use for API calls
-        min_reviews_per_rating: Minimum reviews to keep per rating
-        max_reviews_per_rating: Maximum reviews per rating
-        tfidf_weight: Weight for TF-IDF in hybrid scoring
-        
-    Returns:
-        FilteringCriteria object
+    Helper to build FilteringCriteria with common defaults.
     """
     return FilteringCriteria(
         token_limit=token_limit,
-        min_reviews_per_rating=min_reviews_per_rating,
-        max_reviews_per_rating=max_reviews_per_rating,
-        tfidf_weight=tfidf_weight
+        helpful_boost=helpful_boost,
+        tokens_per_char=tokens_per_char,
+        use_verified=use_verified,
+        use_useful=use_useful,
     )
+
 
 # Backward compatibility alias
 CredibilityFilter = AdvancedReviewFilter

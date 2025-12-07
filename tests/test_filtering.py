@@ -1,125 +1,77 @@
 """
-Test suite for the filtering module.
+Test suite for the embedding-based filtering module.
 """
 
-import pytest
+import numpy as np
 import pandas as pd
-from src.filtering import CredibilityFilter, FilteringCriteria, create_filtering_criteria
+import pytest
 
-def test_filtering_criteria():
-    """Test FilteringCriteria dataclass."""
-    criteria = FilteringCriteria(
-        min_helpful_votes=5,
-        require_verified=True,
-        min_review_length=50
+from src.filtering import AdvancedReviewFilter, FilteringCriteria, create_filtering_criteria
+
+
+def test_filtering_criteria_defaults():
+    criteria = FilteringCriteria()
+    assert criteria.token_limit == 4000
+    assert criteria.tokens_per_char == 0.25
+    assert criteria.helpful_boost == 0.5
+    assert criteria.use_verified is None
+    assert criteria.use_useful is None
+
+
+def test_user_selection_filters():
+    reviews_df = pd.DataFrame(
+        [
+            {"review_id": "r1", "text": "verified helpful", "verified": True, "helpful_votes": 2, "rating": 5},
+            {"review_id": "r2", "text": "unverified helpful", "verified": False, "helpful_votes": 3, "rating": 4},
+            {"review_id": "r3", "text": "verified not useful", "verified": True, "helpful_votes": 0, "rating": 3},
+        ]
     )
-    
-    assert criteria.min_helpful_votes == 5
-    assert criteria.require_verified == True
-    assert criteria.min_review_length == 50
+    embeddings = np.array([[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]], dtype="float32")
+    mapping = [0, 1, 2]
 
-def test_credibility_filter_initialization():
-    """Test CredibilityFilter initialization."""
-    criteria = create_filtering_criteria()
-    filterer = CredibilityFilter(criteria)
-    
-    assert filterer.criteria is not None
-    assert len(filterer.spam_patterns) > 0
+    filterer = AdvancedReviewFilter(create_filtering_criteria(use_verified=True, use_useful=True))
+    filtered_df, stats = filterer.filter_reviews_with_selection(
+        reviews_df,
+        sentence_embeddings=embeddings,
+        sentence_to_review_mapping=mapping,
+    )
 
-def test_filter_reviews():
-    """Test review filtering functionality."""
-    # Create sample reviews DataFrame
-    reviews_data = [
-        {
-            'review_id': 'r001',
-            'text': 'This is a great product with excellent quality and durability.',
-            'rating': 5.0,
-            'verified': True,
-            'helpful_votes': 10
-        },
-        {
-            'review_id': 'r002',
-            'text': 'Bad product, click here to buy better one!',
-            'rating': 1.0,
-            'verified': False,
-            'helpful_votes': 1
-        },
-        {
-            'review_id': 'r003',
-            'text': 'Average product, nothing special.',
-            'rating': 3.0,
-            'verified': True,
-            'helpful_votes': 5
-        }
-    ]
-    
-    reviews_df = pd.DataFrame(reviews_data)
-    
-    criteria = create_filtering_criteria(min_helpful_votes=5, require_verified=True)
-    filterer = CredibilityFilter(criteria)
-    
-    filtered_df, stats = filterer.filter_reviews(reviews_df)
-    
-    # Should filter out r002 (low helpful votes, unverified, spam)
-    assert len(filtered_df) == 2
-    assert 'r001' in filtered_df['review_id'].values
-    assert 'r003' in filtered_df['review_id'].values
-    assert 'r002' not in filtered_df['review_id'].values
-    
-    # Check stats
-    assert stats['original_count'] == 3
-    assert stats['filtered_count'] == 2
+    assert len(filtered_df) == 1
+    assert filtered_df.loc[0, "review_id"] == "r1"
+    assert stats["after_selection_count"] == 1
+    assert stats["selection_applied"]["verified_only"] == 1
+    assert stats["selection_applied"]["useful_only"] == 1
 
-def test_credibility_score():
-    """Test credibility score calculation."""
-    criteria = create_filtering_criteria()
-    filterer = CredibilityFilter(criteria)
-    
-    # High credibility review
-    high_cred_review = {
-        'verified': True,
-        'helpful_votes': 50,
-        'text': 'This is a detailed review with lots of information about the product.',
-        'rating': 4.0
-    }
-    
-    score = filterer.get_credibility_score(high_cred_review)
-    assert score > 0.5
-    
-    # Low credibility review
-    low_cred_review = {
-        'verified': False,
-        'helpful_votes': 0,
-        'text': 'Bad',
-        'rating': 1.0
-    }
-    
-    score = filterer.get_credibility_score(low_cred_review)
-    assert score < 0.5
 
-def test_spam_pattern_filtering():
-    """Test spam pattern filtering."""
-    criteria = create_filtering_criteria()
-    filterer = CredibilityFilter(criteria)
-    
-    spam_texts = [
-        'Click here to buy now!',
-        'Visit our website http://example.com',
-        'THIS IS SPAM!!!',
-        'What??? Really???'
-    ]
-    
-    clean_texts = [
-        'This is a good product',
-        'I recommend this item',
-        'Quality is excellent'
-    ]
-    
-    # Test spam detection
-    for text in spam_texts:
-        assert filterer._filter_spam_patterns(pd.DataFrame({'text': [text]})).empty
-    
-    # Test clean text passes
-    for text in clean_texts:
-        result = filterer._filter_spam_patterns(pd.DataFrame({'text': [text]}))
-        assert not result.empty
+def test_embedding_ranking_respects_token_limit():
+    reviews_df = pd.DataFrame(
+        [
+            {"review_id": "r1", "text": "abcdefghijkl", "verified": True, "helpful_votes": 1, "rating": 5},
+            {"review_id": "r2", "text": "mnopqrstuvwx", "verified": True, "helpful_votes": 0, "rating": 4},
+            {"review_id": "r3", "text": "shorttxt", "verified": True, "helpful_votes": 0, "rating": 3},
+        ]
+    )
+    # Two reviews close to centroid, one further; r1 and r3 should fit token budget (3 + 2 tokens).
+    embeddings = np.array(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+        ],
+        dtype="float32",
+    )
+    mapping = [0, 1, 2]
+
+    filterer = AdvancedReviewFilter(create_filtering_criteria(token_limit=5))
+    filtered_df, stats = filterer.filter_reviews_with_selection(
+        reviews_df,
+        sentence_embeddings=embeddings,
+        sentence_to_review_mapping=mapping,
+    )
+
+    selected_ids = filtered_df["review_id"].tolist()
+    assert selected_ids == ["r1", "r3"]
+    assert stats["after_ranking_count"] == 2
+    assert stats["token_usage"] == 5.0
+    assert "rating_5" in stats["rating_distribution"]
+    assert stats["retention_rate"] == pytest.approx(2 / 3)

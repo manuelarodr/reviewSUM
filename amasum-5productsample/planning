@@ -1,0 +1,45 @@
+Product / UX
+
+How and where will this run in practice (Streamlit app, web service, batch job, something else)? This part is where I am really not sure because I started working on this idea from a static dataset AMASUM (where the 5 product examples are from). So im kinda lost here
+- 
+What’s the target latency for Q&A (e.g., ≤1–2 seconds) and for generating/updating summaries (can be minutes/hours)?
+- yeah around 1/2 secs for chat would be amazing, the latency for summary generation can be long on the back end.
+How exactly do you imagine the UI for:
+Hover‑to‑see “40 of 1000 reviews” for each claim?
+The Q&A experience (side panel on product page, chat‑like, single question box)?
+Data & scale
+
+In your real setup (not just the sample JSON):
+How many products and typical reviews per product (hundreds, thousands, more)? I am using the AMASUM dataset, beacuse the main thing i want to see that the process works and be able to somewhat compare to human summaries. Obviously i cant display this
+How often do new reviews arrive (continuous stream vs daily batches)? this is imaginary because i cant actually connect to amazon
+Do reviews always have: stable review_id, rating, timestamp, and language? yes because working with that dataset
+Are reviews only in English, or is multilingual support needed? no multi-lingual support needed
+Models & resources
+
+Do you have access to a GPU in production, or should all local models (BART, embeddings, sentiment) be CPU‑only? - i have gpu in google colab ig
+Are you okay adding a local sentence‑embedding model and a local sentiment model (e.g., sentence-transformers + a small classifier)? yes
+Beyond Groq, are there any other LLM APIs you plan/allow to use, or should we restrict to Groq + local models only? i am a broke student so 
+API limits & strategy
+
+What are your concrete Groq constraints:
+Max calls per day / per minute?
+Rough budget per product per day?
+Is it acceptable if:
+Summaries are recomputed only periodically (e.g., nightly or after +N new reviews)? after +N reviews would be better
+Q&A sometimes falls back to a “no‑LLM” template answer if the quota is exhausted? - no
+Storage & architecture
+
+Where should we store intermediate artifacts (features, counts, evidence, embeddings, summaries)?
+Existing DB (Postgres/MySQL/etc.) vs new SQLite/files on disk? -ill take your recs
+Are you comfortable adding new tables/schemas for things like product_features, review_embeddings, summary_claims?
+Do you prefer this feature as part of the existing app process, or as a separate service/module?
+Feature detection & sentiment
+
+Are there particular product domains or feature types you care most about (e.g., electronics vs clothing), so we can curate better feature descriptions/keywords? not particulartly
+How strict do you want the counts to be?
+Is a small amount of noise acceptable (e.g., 38 vs 40) if it keeps the system faster and simpler?
+Do you want to manually define some key features per product category (e.g., “battery life”, “comfort”, “fit”), or should everything be discovered automatically?
+Versioning & updates
+
+When reviews are edited or deleted, do we need to recompute counts and summaries, or can we treat them as mostly append‑only? append only
+Do you want to keep historical versions of summaries (for auditing/comparison), or just the latest one per product? just the latest

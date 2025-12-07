@@ -1,326 +1,376 @@
 """
-Interactive dashboard for the credibility-aware review summarizer.
+Streamlit dashboard for review summarization and analysis (CoD + embeddings).
 
-This module provides a Streamlit-based interface for exploring summaries,
-filtering by credibility, and analyzing results.
+This UI lets you:
+- Upload a product JSON (AMASUM-format)
+- See basic product stats
+- Generate:
+  * Chain-of-Density summary from filtered reviews
+  * Entity-grounded feature statistics using sentence embeddings
+- Ask natural-language questions answered from review sentences
 """
 
-import streamlit as st
-import pandas as pd
+from __future__ import annotations
+
 import json
-import plotly.express as px
-import plotly.graph_objects as go
-from typing import Dict, Any, List
-import sys
 import os
+import sys
+from typing import Any, Dict, List
 
-# Add src directory to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+import pandas as pd
+import streamlit as st
+from dotenv import load_dotenv
 
-from summarizer import ChainOfDensitySummarizer, create_summarizer
-from utils.data_loader import load_product_data, reviews_to_dataframe, get_website_summary_verdict
-from utils.config import config
-from filtering import AdvancedReviewFilter, FilteringCriteria
+# Add project root to path for imports when running as a script
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 
-# Page configuration
+# Load environment variables from .env at project root (e.g., GROQ_API_KEY)
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+
+from src.utils.data_loader import reviews_to_dataframe
+from src.qa_engine import answer_question_with_embeddings
+from src.filtering import AdvancedReviewFilter, FilteringCriteria
+from src.sentence_index import build_or_load_sentence_index
+from src.summarizer import create_summarizer
+from src.cod_product_facts import build_product_facts_from_cod
+
+
 st.set_page_config(
     page_title="Review Summarizer",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-def main():
-    """Main dashboard application."""
+
+def main() -> None:
     st.title("Review Summarizer")
-    st.markdown("AI-powered product review summarization using Groq's Llama-3.1-8b-instant")
-    
-    # Sidebar for configuration
+    st.markdown(
+        "AI-powered product review summarization using Chain-of-Density and "
+        "embedding-grounded feature evidence."
+    )
+
     with st.sidebar:
         st.header("File Upload")
-        
-        # File upload
         uploaded_file = st.file_uploader(
             "Upload Product Data (JSON)",
-            type=['json'],
-            help="Upload a JSON file containing product reviews and metadata"
+            type=["json"],
+            help="Upload a JSON file containing product reviews and metadata.",
         )
-        
-    
-    # Main content area
-    if uploaded_file is not None:
+        st.markdown("---")
+        st.header("Filtering")
+        verified_choice = st.selectbox(
+            "Verified purchase filter",
+            options=["All reviews", "Verified only", "Unverified only"],
+            index=0,
+            help="Choose whether to restrict to verified or unverified reviews.",
+        )
+        useful_choice = st.selectbox(
+            "Helpful votes filter",
+            options=["All reviews", "Helpful only", "No helpful votes"],
+            index=0,
+            help="Choose whether to restrict to reviews with helpful votes.",
+        )
+
+    use_verified = None
+    if verified_choice == "Verified only":
+        use_verified = True
+    elif verified_choice == "Unverified only":
+        use_verified = False
+
+    use_useful = None
+    if useful_choice == "Helpful only":
+        use_useful = True
+    elif useful_choice == "No helpful votes":
+        use_useful = False
+
+    if not uploaded_file:
+        st.info("Please upload a product JSON file to get started.")
+        return
+
+    try:
+        data = json.load(uploaded_file)
+    except Exception as exc:
+        st.error(f"Error reading JSON: {exc}")
+        return
+
+    reviews_df = reviews_to_dataframe(data.get("customer_reviews", []))
+    if reviews_df.empty:
+        st.warning("No customer reviews found in this file.")
+        return
+
+    display_product_info(data)
+
+    # Human (website) summary, if available
+    display_human_summary(data)
+
+    # Reset cached ProductFacts when a new file is uploaded
+    current_upload_name = getattr(uploaded_file, "name", None)
+    last_upload_name = st.session_state.get("last_uploaded_name")
+    if current_upload_name != last_upload_name:
+        st.session_state["last_uploaded_name"] = current_upload_name
+        st.session_state.pop("product_facts", None)
+        st.session_state.pop("filter_stats", None)
+
+    # CoD + embeddings pipeline: summary + feature stats + Q&A
+    st.header("AI Summary (CoD + Embeddings)")
+    if st.button("Generate Summary", type="primary"):
+        product_id = infer_product_id(data, uploaded_file.name)
         try:
-            # Load and process data
-            data = json.load(uploaded_file)
-            
-            # Display product information
-            display_product_info(data)
-            
-            # Process reviews
-            reviews_df = reviews_to_dataframe(data['customer_reviews'])
-            
-            # Apply TF-IDF filtering
-            st.header("🔍 Review Filtering & Selection")
-            criteria = FilteringCriteria(
-                token_limit=4000,
-                min_reviews_per_rating=2,
-                max_reviews_per_rating=50,
-                tfidf_weight=0.7
-            )
-            
-            filterer = AdvancedReviewFilter(criteria)
-            filtered_df, filter_stats = filterer.filter_reviews(reviews_df)
-            
-            # Display filtering breakdown
-            display_filtering_breakdown(reviews_df, filter_stats)
-            
-            # Display human-generated summary
-            display_human_summary(data)
-            
-            # Summarization
-            st.header("📝 AI Summary Generation")
-            if st.button("Generate Summary", type="primary"):
-                with st.spinner("Generating summary..."):
-                    # Create empty themes data since we're not using theme extraction
-                    themes_data = {"theme_stats": {}}
-                    
-                    summary_result = generate_summary(
-                        filtered_df, themes_data, data.get('product_meta', {}).get('title', 'product'),
-                        120  # Default summary length
-                    )
-                    
-                    display_summary_results(summary_result, filtered_df)
-                
-        except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
-    else:
-        # Display sample data information
-        st.info("👆 Please upload a JSON file to get started")
-        display_sample_data_info()
+            with st.spinner(
+                "Filtering reviews, running Chain-of-Density, and grounding entities..."
+            ):
+                # Build sentence index and embeddings once
+                sentences_df, sentence_embeddings = build_or_load_sentence_index(
+                    str(product_id), reviews_df
+                )
 
-def display_product_info(data: Dict[str, Any]):
-    """Display product information."""
-    st.header("📦 Product Information")
-    product_meta = data.get('product_meta', {})
-        # Display product title
-    if 'title' in product_meta:
-        st.write(f"**Product:** {product_meta['title']}")
+                review_id_to_idx = {
+                    rid: idx for idx, rid in enumerate(reviews_df["review_id"])
+                }
+                sentence_to_review_mapping = [
+                    review_id_to_idx.get(rid, -1)
+                    for rid in sentences_df["review_id"].tolist()
+                ]
 
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Total Reviews", len(data['customer_reviews']))
-    
-    with col2:
-        avg_rating = sum(review['rating'] for review in data['customer_reviews']) / len(data['customer_reviews'])
-        st.metric("Average Rating", f"{avg_rating:.1f}/5")
-    
-    with col3:
-        helpful_count = sum(1 for review in data['customer_reviews'] if review.get('helpful_votes', 0) > 0)
-        st.metric("Reviews with Helpful Votes", f"{helpful_count}/{len(data['customer_reviews'])}")
-    
+                # Filter reviews within token budget
+                filterer = AdvancedReviewFilter(FilteringCriteria())
+                filtered_df, filter_stats = filterer.filter_reviews(
+                    reviews_df,
+                    sentence_embeddings=sentence_embeddings,
+                    sentence_to_review_mapping=sentence_to_review_mapping,
+                    use_verified=use_verified,
+                    use_useful=use_useful,
+                )
 
-def display_filtering_breakdown(reviews_df: pd.DataFrame, filter_stats: Dict[str, Any]):
-    """Display filtering breakdown by rating strata showing TF-IDF sampling results."""
-    
-    # Calculate original rating distribution
-    original_counts = reviews_df['rating'].value_counts().sort_index()
-    total_original = len(reviews_df)
-    
-    # Create breakdown data
-    breakdown_data = []
-    for rating in sorted(original_counts.index):
-        original_count = original_counts[rating]
-        original_percentage = (original_count / total_original) * 100
-        
-        # Get filtered stats for this rating
-        rating_key = f'rating_{int(rating)}'
-        if rating_key in filter_stats.get('rating_distribution', {}):
-            rating_stats = filter_stats['rating_distribution'][rating_key]
-            selected_count = rating_stats.get('selected_reviews', 0)
-            target_count = rating_stats.get('target_reviews', 0)
-            original_proportion = rating_stats.get('original_proportion', 0) * 100
-        else:
-            selected_count = 0
-            target_count = 0
-            original_proportion = original_percentage
-        
-        breakdown_data.append({
-            'Rating': f"{int(rating)}⭐",
-            'Original': original_count,
-            'Original %': f"{original_percentage:.1f}%",
-            'Target': target_count,
-            'Selected': selected_count,
-            'Selection Rate': f"{(selected_count/original_count*100):.1f}%" if original_count > 0 else "0%"
-        })
-    
-    breakdown_df = pd.DataFrame(breakdown_data)
-    st.dataframe(breakdown_df, width='stretch')
-    
-    # Show summary statistics
-    total_selected = sum(row['Selected'] for _, row in breakdown_df.iterrows())
-    st.info(f"**Total Reviews Used for Summary:** {total_selected} out of {total_original} original reviews")
-
-def display_human_summary(data: Dict[str, Any]):
-    """Display human-generated summary from website."""
-    st.subheader("👤 Human-Generated Summary")
-    
-    website_summaries = data.get('website_summaries', [])
-    
-    if website_summaries and len(website_summaries) > 0:
-        # Get the first summary from the list
-        summary = website_summaries[0]
-        
-        if 'verdict' in summary and summary['verdict']:
-            st.write("**Verdict:**")
-            st.write(summary['verdict'])
-        
-        if 'pros' in summary and summary['pros']:
-            st.write("**Pros:**")
-            if isinstance(summary['pros'], list):
-                for pro in summary['pros']:
-                    st.write(f"• {pro}")
-            else:
-                st.write(summary['pros'])
-        
-        if 'cons' in summary and summary['cons']:
-            st.write("**Cons:**")
-            if isinstance(summary['cons'], list):
-                for con in summary['cons']:
-                    st.write(f"• {con}")
-            else:
-                st.write(summary['cons'])
-    else:
-        st.info("No human-generated summary available for this product.")
-
-def generate_summary(reviews_df: pd.DataFrame, themes_data: Dict[str, Any], 
-                    product_name: str, max_length: int) -> Dict[str, Any]:
-    """Generate summary using Chain-of-Density with Groq."""
-    summarizer = create_summarizer(
-        model_name="llama-3.1-8b-instant",
-        max_length=max_length
-    )
-    
-    return summarizer.summarize(reviews_df, themes_data, product_name)
-
-def display_summary_generation_stats(summary_result: Dict[str, Any], reviews_df: pd.DataFrame):
-    """Display statistics about summary generation."""
-    st.subheader("📈 Summary Generation Statistics")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Reviews Analyzed", len(reviews_df))
-    
-    with col2:
-        entities_count = len(summary_result.get('entities', []))
-        st.metric("Entities Identified", entities_count)
-    
-    with col3:
-        st.metric("Summary Length", f"{len(summary_result.get('summary', ''))} chars")
-
-def display_summary_results(summary_result: Dict[str, Any], reviews_df: pd.DataFrame):
-    """Display summary results with generation statistics."""
-    
-    # Show generation statistics first
-    display_summary_generation_stats(summary_result, reviews_df)
-    
-    # Display the generated summary
-    st.subheader("📝 Generated Summary")
-    st.write(summary_result['summary'])
-    
-    # Display entities with full review text
-    entities = summary_result.get('entities', [])
-    if entities:
-        st.subheader("🔍 Identified Entities & Supporting Reviews")
-        
-        # Create a mapping of review_id to review data for quick lookup
-        review_map = {row['review_id']: row for _, row in reviews_df.iterrows()}
-        
-        for i, entity in enumerate(entities, 1):
-            st.markdown(f"### Entity {i}: {entity['entity']}")
-            
-            # Entity metadata
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Iteration Added", entity['iteration'])
-            with col2:
-                st.metric("Review Count", entity['review_count'])
-            with col3:
-                st.metric("Percentage", f"{entity['percentage']:.1%}")
-            
-            # Show all supporting reviews with full text
-            st.write("**Supporting Reviews:**")
-            for j, review_id in enumerate(entity['supporting_reviews'], 1):
-                if review_id in review_map:
-                    review = review_map[review_id]
-                    
-                    # Create an expandable section for each review
-                    with st.expander(f"Review {j}: {review_id} (⭐{review['rating']})"):
-                        st.write(f"**Review ID:** {review_id}")
-                        st.write(f"**Rating:** {review['rating']}/5")
-                        st.write(f"**Author:** {review.get('author', 'Unknown')}")
-                        st.write(f"**Date:** {review.get('publication_date', 'Unknown')}")
-                        st.write(f"**Helpful Votes:** {review.get('helpful_votes', 0)}")
-                        
-                        st.write("**Full Review Text:**")
-                        st.write(review['text'])
-                        
-                        # Show review title if available
-                        if 'title' in review and review['title']:
-                            st.write(f"**Title:** {review['title']}")
+                if filtered_df.empty:
+                    st.warning("No reviews remain after filtering.")
+                    st.session_state["product_facts"] = None
+                    st.session_state["filter_stats"] = filter_stats
                 else:
-                    st.warning(f"Review {review_id} not found in dataset")
-            
-            st.divider()  # Add separator between entities
-    
-    # Display entity log for debugging
-    entity_log = summary_result.get('entity_log', [])
-    if entity_log:
-        with st.expander("🔧 Entity Development Log (Debug)"):
-            st.write("**Chain-of-Density Entity Development:**")
-            for entry in entity_log:
-                st.write(f"**Iteration {entry.get('iteration', '?')}:** {entry.get('entity', '')}")
-                st.write(f"  Supporting Reviews: {', '.join(entry.get('review_ids', []))}")
-                st.write("---")
+                    # Chain-of-Density summarization
+                    summarizer = create_summarizer()
+                    product_name = data.get("product_meta", {}).get("title", "product")
+                    summary_result = summarizer.summarize(
+                        filtered_df, themes_data={}, product_name=product_name
+                    )
 
-def display_sample_data_info():
-    """Display information about sample data format."""
-    st.header("📋 Sample Data Format")
-    
-    st.markdown("""
-    The system expects JSON files with the following structure:
-    
-    ```json
-    {
-      "website_summaries": [
-        {
-          "verdict": "Human-written summary",
-          "pros": ["pro1", "pro2"],
-          "cons": ["con1", "con2"],
-          "source": "source_name"
-        }
-      ],
-      "customer_reviews": [
-        {
-          "title": "Review title",
-          "text": "Review content",
-          "rating": 5.0,
-          "verified": true,
-          "author": "Author name",
-          "helpful_votes": 79,
-          "publication_date": 20180501
-        }
-      ],
-      "product_meta": {
-        "title": "Product title",
-        "rating": 4.5,
-        "categories": ["category1", "category2"]
-      }
-    }
-    ```
-    
-    You can use the sample files in the `amasum-5productsample` directory for testing.
-    """)
+                    product_facts = build_product_facts_from_cod(
+                        product_id=product_id,
+                        reviews_df=filtered_df,
+                        summary_result=summary_result,
+                        similarity_threshold=0.3,
+                        max_hits=50,
+                        max_evidence=5,
+                        sentences_df=sentences_df,
+                        sentence_embeddings=sentence_embeddings,
+                    )
+                    st.session_state["product_facts"] = product_facts
+                    st.session_state["filter_stats"] = filter_stats
+
+        except Exception as exc:
+            st.warning(f"CoD pipeline failed; no AI summary is available. Details: {exc}")
+            st.session_state["product_facts"] = None
+            st.session_state["filter_stats"] = None
+
+    # If we have cached ProductFacts, always display summary and Q&A
+    product_facts_cached = st.session_state.get("product_facts")
+    filter_stats_cached = st.session_state.get("filter_stats")
+    if product_facts_cached is not None:
+        display_product_facts_summary(product_facts_cached, reviews_df, filter_stats_cached)
+        display_product_facts_qa(product_facts_cached, reviews_df)
+
+
+def infer_product_id(data: Dict[str, Any], filename: str) -> str:
+    """Infer a stable product_id for caching from metadata or filename."""
+    meta = data.get("product_meta", {}) or {}
+    for key in ("asin", "isbn", "id", "sku"):
+        val = meta.get(key)
+        if val:
+            return str(val)
+
+    specs = meta.get("specifications", {}) or {}
+    for key in ("ASIN", "asin", "ISBN-10", "ISBN-13"):
+        val = specs.get(key)
+        if val:
+            return str(val)
+
+    stem, _ = os.path.splitext(filename or "uploaded")
+    return stem
+
+
+def display_product_info(data: Dict[str, Any]) -> None:
+    """Display high-level product information and review stats."""
+    st.header("Product Information")
+    product_meta = data.get("product_meta", {}) or {}
+
+    title = product_meta.get("title")
+    if title:
+        st.write(f"**Product:** {title}")
+
+    reviews = data.get("customer_reviews", []) or []
+    if not reviews:
+        return
+
+    total_reviews = len(reviews)
+    avg_rating = sum(r.get("rating", 0.0) for r in reviews) / total_reviews
+    helpful_count = sum(1 for r in reviews if r.get("helpful_votes", 0) > 0)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Reviews", total_reviews)
+    with col2:
+        st.metric("Average Rating", f"{avg_rating:.1f}/5")
+    with col3:
+        st.metric("Reviews with Helpful Votes", f"{helpful_count}/{total_reviews}")
+
+
+def display_human_summary(data: Dict[str, Any]) -> None:
+    """Display human-generated (website) summary, if present."""
+    st.subheader("Human-Generated Summary (Website)")
+    website_summaries = data.get("website_summaries", []) or []
+
+    if not website_summaries:
+        st.info("No human-generated summary available for this product.")
+        return
+
+    summary = website_summaries[0]
+    verdict = summary.get("verdict")
+    pros = summary.get("pros")
+    cons = summary.get("cons")
+
+    if verdict:
+        st.write("**Verdict:**")
+        st.write(verdict)
+
+    if pros:
+        st.write("**Pros:**")
+        if isinstance(pros, list):
+            for p in pros:
+                st.write(f"- {p}")
+        else:
+            st.write(pros)
+
+    if cons:
+        st.write("**Cons:**")
+        if isinstance(cons, list):
+            for c in cons:
+                st.write(f"- {c}")
+        else:
+            st.write(cons)
+
+
+def display_product_facts_summary(
+    product_facts, reviews_df: pd.DataFrame, filter_stats: Dict[str, Any] | None
+) -> None:
+    """Display CoD summary text and per-feature statistics."""
+    summary = getattr(product_facts, "summary", None)
+    if summary is None or not getattr(summary, "text", ""):
+        st.info("No AI summary available for this product.")
+        return
+
+    st.subheader("Chain-of-Density Summary (Overview)")
+    st.write(summary.text)
+
+    if filter_stats:
+        with st.expander("Filtering summary"):
+            st.write(
+                f"Selected {filter_stats.get('after_ranking_count', 0)} "
+                f"of {filter_stats.get('original_count', 0)} reviews "
+                f"({filter_stats.get('retention_rate', 0):.1%} retention)"
+            )
+            st.write(
+                f"Token usage: {filter_stats.get('token_usage', 0.0):.0f} / "
+                f"{filter_stats.get('token_limit', 0)}"
+            )
+            applied = []
+            if filter_stats.get("selection_applied"):
+                sel = filter_stats["selection_applied"]
+                if sel.get("verified_only"):
+                    applied.append("Verified only")
+                if sel.get("exclude_verified"):
+                    applied.append("Unverified only")
+                if sel.get("useful_only"):
+                    applied.append("Helpful only")
+                if sel.get("exclude_useful"):
+                    applied.append("No helpful votes")
+            if applied:
+                st.write("Filters: " + ", ".join(applied))
+
+    features = getattr(product_facts, "features", []) or []
+    if not features:
+        st.info(
+            "No feature-level statistics available "
+            "(feature extraction may have failed or been skipped)."
+        )
+        return
+
+    st.subheader("Feature Statistics from Reviews")
+    total_reviews = getattr(product_facts, "total_reviews", 0) or 0
+    review_lookup = (
+        reviews_df.set_index("review_id")["text"].to_dict()
+        if not reviews_df.empty and "review_id" in reviews_df
+        else {}
+    )
+
+    for feat in features:
+        if total_reviews:
+            count_label = f"{feat.review_count} / {total_reviews} reviews"
+        else:
+            count_label = f"{feat.review_count} reviews"
+
+        header = f"{feat.name} — {count_label}"
+        with st.expander(header):
+            st.write(
+                f"Sentiment breakdown: {feat.positive_count} positive, "
+                f"{feat.negative_count} negative, {feat.neutral_count} neutral."
+            )
+
+            full_reviews_shown = 0
+            if getattr(feat, "supporting_review_ids", None):
+                st.write("Supporting reviews (full text):")
+                for rid in feat.supporting_review_ids:
+                    full_text = review_lookup.get(rid)
+                    if not full_text:
+                        continue
+                    st.markdown(f"- **{rid}**: {full_text}")
+                    full_reviews_shown += 1
+                    if full_reviews_shown >= 5:
+                        break
+            if full_reviews_shown == 0:
+                st.write("No supporting reviews available.")
+
+
+def display_product_facts_qa(product_facts, reviews_df: pd.DataFrame) -> None:
+    """Q&A panel powered by sentence embeddings over reviews."""
+    st.subheader("Ask Questions About This Product")
+    question = st.text_input(
+        "Ask what reviewers say about this product "
+        "(e.g., 'What do people say about the images?', 'Is it good for beginners?')",
+        key="qa_product_facts_question",
+    )
+
+    if not question:
+        return
+
+    # Answer immediately when a question is present (no extra button)
+    with st.spinner("Searching in review sentences..."):
+        qa_result = answer_question_with_embeddings(
+            question=question,
+            product_facts=product_facts,
+            reviews_df=reviews_df,
+        )
+
+    st.markdown("**Answer:**")
+    st.write(qa_result.get("answer", ""))
+
+    evidence = qa_result.get("evidence", []) or []
+    if evidence:
+        st.write("Example review sentences used:")
+        for i, sent in enumerate(evidence, 1):
+            st.write(f"{i}. {sent}")
+
 
 if __name__ == "__main__":
     main()

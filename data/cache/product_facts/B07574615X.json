@@ -1,0 +1,97 @@
+{
+  "product_id": "B07574615X",
+  "total_reviews": 24,
+  "features": [
+    {
+      "name": "Product Effectiveness",
+      "description": "How well the product works to achieve its intended purpose",
+      "review_count": 14,
+      "positive_count": 11,
+      "negative_count": 3,
+      "neutral_count": 0,
+      "supporting_review_ids": [
+        "r000",
+        "r001",
+        "r003",
+        "r004",
+        "r006",
+        "r010",
+        "r014",
+        "r015",
+        "r017",
+        "r018",
+        "r020",
+        "r021",
+        "r022",
+        "r023"
+      ],
+      "evidence_sentences": [
+        "Excellent products at an affordable price!",
+        "Great quality products!",
+        "Good product but it didn't have the same fragrance I remembered from a previous purchase and that was disappointing.",
+        "Great products for men.",
+        "Fantastic for travel as well as home use."
+      ]
+    },
+    {
+      "name": "Brand Reputation",
+      "description": "The customer's perception of the brand's quality and reliability",
+      "review_count": 4,
+      "positive_count": 2,
+      "negative_count": 2,
+      "neutral_count": 0,
+      "supporting_review_ids": [
+        "r000",
+        "r003",
+        "r006",
+        "r023"
+      ],
+      "evidence_sentences": [
+        "Good quality @ good price!",
+        "I like all the products in this kit but quality control is horrible.",
+        "Great quality products!",
+        "Overall I've never been disappointed by Jack Black products, and believe you won't get better men's luxury toiletries for the price.",
+        "Fantastic for travel as well as home use."
+      ]
+    }
+  ],
+  "summary": {
+    "text": "Jack Black Shave Essentials Set is a great go-to kit for men. The face wash and the shave cream leave his face very smooth. I've never been disappointed by Jack Black products. Order this to spoil yourself or as a gift.",
+    "claims": [
+      {
+        "text": "The face wash and the shave cream leave his face very smooth",
+        "feature_name": "Product Effectiveness",
+        "review_count": 14,
+        "total_reviews": 24,
+        "supporting_review_ids": [
+          "r000",
+          "r001",
+          "r003",
+          "r004",
+          "r006",
+          "r010",
+          "r014",
+          "r015",
+          "r017",
+          "r018",
+          "r020",
+          "r021",
+          "r022",
+          "r023"
+        ]
+      },
+      {
+        "text": "I've never been disappointed by Jack Black products",
+        "feature_name": "Brand Reputation",
+        "review_count": 4,
+        "total_reviews": 24,
+        "supporting_review_ids": [
+          "r000",
+          "r003",
+          "r006",
+          "r023"
+        ]
+      }
+    ]
+  }
+}

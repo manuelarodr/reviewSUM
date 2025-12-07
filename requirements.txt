@@ -18,6 +18,11 @@ python-dotenv>=1.0.0
 
 # Evaluation metrics (optional - only used in evaluation.py)
 rouge-score>=0.1.2
+bert-score>=0.3.13
 
 # Development and testing (optional)
 pytest>=7.4.0
+
+# Local NLP models (optional - used in demos / feature sentiment)
+transformers>=4.40.0
+torch>=2.2.0
