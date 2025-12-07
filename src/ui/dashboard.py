@@ -178,8 +178,16 @@ def main() -> None:
     product_facts_cached = st.session_state.get("product_facts")
     filter_stats_cached = st.session_state.get("filter_stats")
     if product_facts_cached is not None:
-        display_product_facts_summary(product_facts_cached, reviews_df, filter_stats_cached)
-        display_product_facts_qa(product_facts_cached, reviews_df)
+        tab_summary, tab_features, tab_qa = st.tabs(["Summary", "Features", "Q&A"])
+    
+        with tab_summary:
+            display_cod_overview(product_facts_cached, filter_stats_cached)
+    
+        with tab_features:
+            display_feature_statistics(product_facts_cached, reviews_df)
+    
+        with tab_qa:
+            display_product_facts_qa(product_facts_cached, reviews_df)
 
 
 def infer_product_id(data: Dict[str, Any], filename: str) -> str:
@@ -261,10 +269,10 @@ def display_human_summary(data: Dict[str, Any]) -> None:
             st.write(cons)
 
 
-def display_product_facts_summary(
-    product_facts, reviews_df: pd.DataFrame, filter_stats: Dict[str, Any] | None
+def display_cod_overview(
+    product_facts, filter_stats: Dict[str, Any] | None
 ) -> None:
-    """Display CoD summary text and per-feature statistics."""
+    """Display CoD summary text and filtering details (high-level overview)."""
     summary = getattr(product_facts, "summary", None)
     if summary is None or not getattr(summary, "text", ""):
         st.info("No AI summary available for this product.")
@@ -298,6 +306,11 @@ def display_product_facts_summary(
             if applied:
                 st.write("Filters: " + ", ".join(applied))
 
+
+def display_feature_statistics(
+    product_facts, reviews_df: pd.DataFrame
+) -> None:
+    """Display per-feature statistics and supporting review snippets."""
     features = getattr(product_facts, "features", []) or []
     if not features:
         st.info(
