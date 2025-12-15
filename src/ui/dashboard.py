@@ -153,7 +153,7 @@ def main() -> None:
                     summarizer = create_summarizer()
                     product_name = data.get("product_meta", {}).get("title", "product")
                     summary_result = summarizer.summarize(
-                        filtered_df, themes_data={}, product_name=product_name
+                        filtered_df, product_name=product_name
                     )
 
                     product_facts = build_product_facts_from_cod(
@@ -378,11 +378,19 @@ def display_product_facts_qa(product_facts, reviews_df: pd.DataFrame) -> None:
     st.markdown("**Answer:**")
     st.write(qa_result.get("answer", ""))
 
-    evidence = qa_result.get("evidence", []) or []
-    if evidence:
-        st.write("Example review sentences used:")
-        for i, sent in enumerate(evidence, 1):
-            st.write(f"{i}. {sent}")
+    evidence_items = qa_result.get("evidence", []) or []
+    if evidence_items:
+        st.write("Relevant Reviews:")
+        for idx, item in enumerate(evidence_items, 1):
+            if isinstance(item, dict):
+                review_text = item.get("text") or item.get("review_text") or ""
+                review_id = item.get("review_id")
+                prefix = f"{idx}. "
+                if review_id:
+                    prefix += f"[Review {review_id}] "
+                st.markdown(f"{prefix}{review_text}")
+            else:
+                st.markdown(f"{idx}. {item}")
 
 
 if __name__ == "__main__":

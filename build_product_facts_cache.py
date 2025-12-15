@@ -6,8 +6,10 @@ For each product JSON in amasum-5productsample:
   - If a cached ProductFacts file exists, reuse it (unless --force is set).
   - Otherwise:
       * load reviews
-      * compute feature-level facts (local models only)
-      * optionally call Groq once to generate a feature-grounded summary
+      * build sentence index + embeddings
+      * filter reviews to a token budget
+      * run Chain-of-Density summarization (Groq)
+      * ground entities to features with embeddings
       * save ProductFacts to data/cache/product_facts/<product_id>.json
 
 """
@@ -21,9 +23,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.utils.data_loader import load_product_data, reviews_to_dataframe
-from src.feature_sentiment import build_product_facts_from_features
-from src.feature_summary_groq import summarize_product_facts_with_groq
 from src.product_facts_io import load_product_facts, save_product_facts
+from src.sentence_index import build_or_load_sentence_index
+from src.filtering import AdvancedReviewFilter, FilteringCriteria
+from src.summarizer import create_summarizer
+from src.cod_product_facts import build_product_facts_from_cod
 
 
 def infer_product_id(data_path: Path, data: dict) -> str:
@@ -42,7 +46,6 @@ def process_product_json(
     path: Path,
     *,
     force: bool = False,
-    summarize: bool = True,
 ) -> None:
     """
     Build or reuse ProductFacts for a single product JSON file.
@@ -62,11 +65,48 @@ def process_product_json(
     reviews_df = reviews_to_dataframe(data["customer_reviews"])
     print(f"Reviews: {len(reviews_df)}")
 
-    # Local feature detection + sentiment
-    print("Computing feature-level facts locally...")
-    product_facts = build_product_facts_from_features(
+    # Build or load sentence-level embeddings
+    print("Building sentence index and embeddings...")
+    sentences_df, sentence_embeddings = build_or_load_sentence_index(
+        str(product_id), reviews_df
+    )
+
+    review_id_to_idx = {
+        rid: idx for idx, rid in enumerate(reviews_df["review_id"])
+    }
+    sentence_to_review_mapping = [
+        review_id_to_idx.get(rid, -1) for rid in sentences_df["review_id"].tolist()
+    ]
+
+    # Filter reviews to stay within token budget
+    filterer = AdvancedReviewFilter(FilteringCriteria())
+    filtered_df, filter_stats = filterer.filter_reviews(
+        reviews_df,
+        sentence_embeddings=sentence_embeddings,
+        sentence_to_review_mapping=sentence_to_review_mapping,
+    )
+    print(
+        f"Selected {len(filtered_df)} of {len(reviews_df)} reviews "
+        f"({filter_stats.get('retention_rate', 0):.1%} retention)"
+    )
+
+    # Chain-of-Density summarization
+    summarizer = create_summarizer()
+    product_name = data.get("product_meta", {}).get("title", "product")
+    summary_result = summarizer.summarize(
+        filtered_df, product_name=product_name
+    )
+
+    # Ground entities to ProductFacts
+    product_facts = build_product_facts_from_cod(
         product_id=product_id,
-        reviews_df=reviews_df,
+        reviews_df=filtered_df,
+        summary_result=summary_result,
+        similarity_threshold=0.3,
+        max_hits=50,
+        max_evidence=5,
+        sentences_df=sentences_df,
+        sentence_embeddings=sentence_embeddings,
     )
 
     # Cache result
@@ -88,11 +128,6 @@ def main() -> None:
         action="store_true",
         help="Recompute ProductFacts even if a cached file exists.",
     )
-    parser.add_argument(
-        "--no-summary",
-        action="store_true",
-        help="Skip Groq summarization; only compute feature facts.",
-    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -109,10 +144,8 @@ def main() -> None:
         process_product_json(
             path,
             force=args.force,
-            summarize=not args.no_summary,
         )
 
 
 if __name__ == "__main__":
     main()
-

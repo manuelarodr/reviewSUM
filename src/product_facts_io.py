@@ -16,7 +16,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional, List
 
-from .product_facts import ProductFacts, FeatureFact, SummaryObject, Claim
+from .product_facts import ProductFacts, FeatureFact, SummaryObject
 
 
 CACHE_DIR = Path("data") / "cache" / "product_facts"
@@ -59,13 +59,7 @@ def load_product_facts(
     ]
 
     summary_data = data.get("summary", {}) or {}
-    claims_data = summary_data.get("claims", []) or []
-    claims: List[Claim] = [Claim(**c) for c in claims_data]
-
-    summary = SummaryObject(
-        text=summary_data.get("text", "") or "",
-        claims=claims,
-    )
+    summary = SummaryObject(text=summary_data.get("text", "") or "")
 
     return ProductFacts(
         product_id=str(data.get("product_id", "")),
@@ -73,4 +67,3 @@ def load_product_facts(
         features=features,
         summary=summary,
     )
-

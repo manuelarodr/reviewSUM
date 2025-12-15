@@ -16,22 +16,12 @@ from .sentence_index import build_or_load_sentence_index
 def _extract_entity_names(summary_result: Dict[str, Any]) -> List[str]:
     """
     Extract entity names from a summarization result.
-    Prefers the validated `entities` list; falls back to entity_log if present.
+    Uses the `entities` list when present.
     """
     names: List[str] = []
     entities = summary_result.get("entities") or []
     for ent in entities:
         name = ent.get("entity") if isinstance(ent, dict) else ent
-        if name:
-            names.append(str(name))
-
-    if names:
-        return names
-
-    # Fallback: entity_log entries may exist if entities list is empty
-    entity_log = summary_result.get("entity_log") or []
-    for entry in entity_log:
-        name = entry.get("entity")
         if name:
             names.append(str(name))
 
@@ -61,7 +51,7 @@ def build_product_facts_from_cod(
             product_id=str(product_id),
             total_reviews=total_reviews,
             features=[],
-            summary=SummaryObject(text=summary_text, claims=[]),
+            summary=SummaryObject(text=summary_text),
         )
 
     if sentences_df is None or sentence_embeddings is None:
@@ -79,7 +69,7 @@ def build_product_facts_from_cod(
             product_id=str(product_id),
             total_reviews=total_reviews,
             features=[],
-            summary=SummaryObject(text=summary_text, claims=[]),
+            summary=SummaryObject(text=summary_text),
         )
 
     # Restrict to the selected reviews to keep grounding aligned with CoD input
@@ -90,7 +80,7 @@ def build_product_facts_from_cod(
             product_id=str(product_id),
             total_reviews=total_reviews,
             features=[],
-            summary=SummaryObject(text=summary_text, claims=[]),
+            summary=SummaryObject(text=summary_text),
         )
     if mask.sum() != len(sentences_df):
         sentences_df = sentences_df[mask].reset_index(drop=True)
@@ -114,5 +104,5 @@ def build_product_facts_from_cod(
         product_id=str(product_id),
         total_reviews=total_reviews,
         features=feature_facts,
-        summary=SummaryObject(text=summary_text, claims=[]),
+        summary=SummaryObject(text=summary_text),
     )

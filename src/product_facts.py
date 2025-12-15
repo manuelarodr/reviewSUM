@@ -1,14 +1,6 @@
 """
 Data structures and helpers for feature-grounded review summaries.
 
-This module defines the core types used to represent:
-- Feature-level aggregate facts derived from customer reviews
-- Grounded summary text and per-claim metadata
-- A simple sentence index over reviews for downstream feature detection
-
-Steps 1–2 of the implementation plan focus on:
-- Defining these data models (ProductFacts, FeatureFact, Claim)
-- Providing a sentence index builder from the existing reviews DataFrame
 """
 
 from __future__ import annotations
@@ -18,22 +10,6 @@ from typing import List, Optional
 
 import pandas as pd
 import re
-
-
-@dataclass
-class Claim:
-    """
-    A single claim made in a summary about a product feature.
-
-    The counts and supporting_review_ids fields are intended to be
-    derived from the underlying feature facts / sentence-level analysis.
-    """
-
-    text: str
-    feature_name: Optional[str] = None
-    review_count: int = 0
-    total_reviews: int = 0
-    supporting_review_ids: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -61,11 +37,11 @@ class FeatureFact:
 @dataclass
 class SummaryObject:
     """
-    Human-readable summary text plus structured claims metadata.
+    Human-readable summary text.
     """
 
     text: str = ""
-    claims: List[Claim] = field(default_factory=list)
+
 
 
 @dataclass
@@ -161,4 +137,3 @@ def build_sentence_dataframe(reviews_df: pd.DataFrame) -> pd.DataFrame:
         for r in records
     ]
     return pd.DataFrame(data)
-

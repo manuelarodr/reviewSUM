@@ -43,7 +43,7 @@ print("\n=== RUNNING SUMMARIZER ===")
 # Create summarizer and run it
 product_name = data.get('product_meta', {}).get('title', 'product')
 summarizer = create_summarizer()
-result = summarizer.summarize_with_raw_output(filtered_df, themes_data={}, product_name=product_name)
+result = summarizer.summarize(filtered_df, product_name=product_name)
 
 print("\n=== RAW LLM OUTPUT ===")
 print("=" * 80)

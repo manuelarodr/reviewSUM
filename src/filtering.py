@@ -34,17 +34,17 @@ class FilteringCriteria:
 
 
 class AdvancedReviewFilter:
-    """Embedding-first review filter for the Chain-of-Density pipeline."""
+    """"""
 
     def __init__(self, criteria: Optional[FilteringCriteria] = None):
         self.criteria = criteria or FilteringCriteria()
 
     def normalize_column_names(self, df: pd.DataFrame) -> Dict[str, str]:
         """
-        Map canonical column names to actual DataFrame columns.
+        Map column names to actual DataFrame columns.
 
         Returns:
-            Dict[str, str]: Mapping of canonical names to DataFrame column names.
+            Dict[str, str]: Mapping of col names to DataFrame column names.
         """
         candidates = {
             "review_id": ["review_id", "id"],
@@ -254,7 +254,7 @@ class AdvancedReviewFilter:
             "retention_rate": 0.0,
         }
 
-        # Stage 1: User selection filters.
+        # filter reviews by user selection 
         selection_verified = (
             self.criteria.use_verified if use_verified is None else use_verified
         )
@@ -290,7 +290,7 @@ class AdvancedReviewFilter:
         if len(working_df) == 0:
             return working_df, stats
 
-        # Stage 2: Token budget check (early return if within budget).
+        # Token budget check (early return if within budget).
         total_tokens = float(working_df[text_col].fillna("").apply(self.estimate_tokens).sum())
         if total_tokens <= limit:
             stats["after_ranking_count"] = len(working_df)
@@ -309,7 +309,7 @@ class AdvancedReviewFilter:
                 }
             return working_df.reset_index(drop=True), stats
 
-        # Stage 3: Embedding-based ranking.
+        # ranking based on semantic importance
         review_embeddings = self.aggregate_sentence_embeddings(
             working_df, sentence_embeddings, sentence_to_review_mapping
         )
@@ -317,7 +317,7 @@ class AdvancedReviewFilter:
         semantic_series = pd.Series(semantic_scores, index=working_df.index)
         final_scores = self.add_helpful_boost(working_df, semantic_series, helpful_col)
 
-        # Stage 4: Selection until token limit.
+        # Selection until token limit.
         selected_df, tokens_used = self.select_reviews_by_score(
             working_df, final_scores, limit, text_col
         )
@@ -378,6 +378,3 @@ def create_filtering_criteria(
         use_useful=use_useful,
     )
 
-
-# Backward compatibility alias
-CredibilityFilter = AdvancedReviewFilter

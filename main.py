@@ -80,7 +80,7 @@ def main() -> None:
             print("Error: No reviews found in the input file.")
             sys.exit(1)
 
-        # Step 1: Embedding-based filtering for Chain-of-Density
+        # Filtering Step
         if args.verbose:
             print("Applying embedding-based filtering...")
 
@@ -122,7 +122,7 @@ def main() -> None:
             print("Error: No reviews remain after filtering")
             sys.exit(1)
 
-        # Step 2: Chain-of-Density Summarization
+        # Summarization step
         if args.verbose:
             print("Generating summary with Chain-of-Density prompting...")
 
@@ -133,13 +133,13 @@ def main() -> None:
             max_length=args.max_length,
         )
 
-        summary_result = summarizer.summarize(filtered_df, themes_data={}, product_name=product_name)
+        summary_result = summarizer.summarize(filtered_df, product_name=product_name)
 
         if args.verbose:
             print("Summary generated successfully")
             print(f"Identified {len(summary_result.get('entities', []))} entities")
 
-        # Step 4: Ground entities to build feature list with evidence/sentiment
+        # Ground entities to reviews to build feature list with evidence/sentiment
         product_facts = build_product_facts_from_cod(
             product_id=product_id,
             reviews_df=filtered_df,
