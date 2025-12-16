@@ -1,4 +1,4 @@
-# ReviewSUM
+# Review Summarizer
 
 ## Project Structure
 
