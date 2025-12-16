@@ -1,16 +1,42 @@
+# ReviewSUM
 
-Final product lives in src
-BART folder contains our initial attempt at the summaries with BART
+## Project Structure
+
+- **src/** - Main project code including the dashboard UI, summarization engine, and Q&A.
+- **amasum-5productsample/** - 5 examples of AMASUM product review JSONs (from https://github.com/abrazinskas/SelSum/tree/master/data)
+- **BART/** - Archived code from the BART exploration phase
 
 
-To run the dashboard.py in src\ui:
+## Setup & Installation
 
-1. Install Python 3.10+ and create/activate a virtual env.
+1. **Clone the repository:**
+   ```bash
+   git clone <repo-url>
+   cd reviewSUM
+   ```
 
-2. From the repo root, install dependencies: pip install -r requirements.txt.
+2. **Create a virtual environment** (recommended):
+   ```bash
+   python -m venv venv
+   venv\Scripts\activate  # On Windows
+   # source venv/bin/activate  # On macOS/Linux
+   ```
 
-3. Set your Groq API key: create .env in the repo root with GROQ_API_KEY=your_key_here.
+3. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-4. Start the dashboard: streamlit run src/ui/dashboard.py.
+4. **Set up your GROQ API key:**
+   - Create a `.env` file in the root directory
+   - Add your GROQ API key: `GROQ_API_KEY=your_api_key_here`
 
-5. In the app, upload an AMASUM-format product JSON to generate summaries and use Q&A.
+## Running the Dashboard
+
+Launch the interactive dashboard:
+
+```bash
+streamlit run src/ui/dashboard.py
+```
+
+The application will open at `http://localhost:8501`

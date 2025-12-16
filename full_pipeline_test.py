@@ -45,9 +45,9 @@ product_name = data.get('product_meta', {}).get('title', 'product')
 summarizer = create_summarizer()
 result = summarizer.summarize(filtered_df, product_name=product_name)
 
-print("\n=== RAW LLM OUTPUT ===")
+print("\n=== SUMMARY OUTPUT ===")
 print("=" * 80)
-print(result['raw_output'])
+print(result.get('summary', ''))
 print("=" * 80)
 
 print("\n=== PARSED FINAL OUTPUT ===")
